@@ -15,12 +15,13 @@ export interface Selection {
 }
 
 export async function saveSelection(root: string, input: Omit<Selection, 'updatedAt'>): Promise<Selection> {
-  if (!validId.test(input.sessionId)) throw new Error('Invalid browser session ID.')
-  if (!Array.isArray(input.nodeIds) || !Array.isArray(input.edgeIds) || input.nodeIds.length + input.edgeIds.length > 1000) throw new Error('Invalid selection.')
+  if (typeof input.sessionId !== 'string' || !validId.test(input.sessionId)) throw new Error('Invalid browser session ID.')
+  if (typeof input.board !== 'string' || typeof input.revision !== 'string' || !input.revision) throw new Error('Selection needs a board and revision.')
+  if (!Array.isArray(input.nodeIds) || !Array.isArray(input.edgeIds) || input.nodeIds.length + input.edgeIds.length > 1000 || ![...input.nodeIds,...input.edgeIds].every(id => typeof id === 'string')) throw new Error('Invalid selection.')
   const { data } = await readBoard(root, input.board)
   const nodeSet = new Set((data.nodes ?? []).map(n => n.id))
   const edgeSet = new Set((data.edges ?? []).map(e => e.id))
-  const selection = { ...input, nodeIds: [...new Set(input.nodeIds)].filter(id => nodeSet.has(id)), edgeIds: [...new Set(input.edgeIds)].filter(id => edgeSet.has(id)), updatedAt: Date.now() }
+  const selection = { sessionId: input.sessionId, board: input.board, revision: input.revision, nodeIds: [...new Set(input.nodeIds)].filter(id => nodeSet.has(id)), edgeIds: [...new Set(input.edgeIds)].filter(id => edgeSet.has(id)), updatedAt: Date.now() }
   const dir = path.join(root, '.better-canvas', 'selections')
   await mkdir(dir, { recursive: true })
   const file = path.join(dir, `${input.sessionId}.json`)
@@ -51,6 +52,7 @@ export async function createReference(root: string, input: Omit<Selection, 'upda
   const s = await saveSelection(root, input)
   const { data, revision } = await readBoard(root, s.board)
   if (input.revision !== revision) throw new ConflictError()
+  if (s.nodeIds.length !== new Set(input.nodeIds).size || s.edgeIds.length !== new Set(input.edgeIds).size) throw new Error('Some selected items no longer exist. Select them again before sending.')
   const id = randomUUID()
   const value = { id, board: s.board, nodeIds: s.nodeIds, edgeIds: s.edgeIds, revision,
     nodes: (data.nodes ?? []).filter(n => s.nodeIds.includes(n.id)), edges: (data.edges ?? []).filter(e => s.edgeIds.includes(e.id)), createdAt: new Date().toISOString() }
@@ -66,5 +68,5 @@ export async function readReference(root: string, id: string) {
   const reference = JSON.parse(await readFile(path.join(root, '.better-canvas', 'references', `${id}.json`), 'utf8'))
   const { data, revision } = await readBoard(root, reference.board)
   return { ...reference, currentRevision: revision, stale: revision !== reference.revision,
-    currentNodes: (data.nodes ?? []).filter(n => reference.nodeIds.includes(n.id)) }
+    currentNodes: (data.nodes ?? []).filter(n => reference.nodeIds.includes(n.id)), currentEdges: (data.edges ?? []).filter(e => reference.edgeIds.includes(e.id)) }
 }

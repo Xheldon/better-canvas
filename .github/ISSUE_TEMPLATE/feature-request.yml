@@ -1,12 +1,12 @@
 name: "Feature request / design feedback"
-description: "Propose a feature, or challenge a design decision (cite D1–D5 from docs/design.md)."
+description: "Suggest an improvement to the read-only preview or MCP workflow."
 title: "[feature] "
 labels: ["enhancement"]
 body:
   - type: textarea
     id: what
     attributes:
-      label: What should canvai do?
+      label: What should Better Canvas do?
     validations:
       required: true
   - type: textarea
@@ -19,4 +19,4 @@ body:
     id: decision
     attributes:
       label: Related design decision (if any)
-      description: "e.g. D2 (no Mermaid engine), D5 (turn-based first) — see docs/design.md"
+      description: "See docs/compatibility.md and CLAUDE.md"

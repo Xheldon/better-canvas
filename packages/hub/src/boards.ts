@@ -1,15 +1,16 @@
-import { mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { revisionOf, vaultPath, writeVersioned } from './storage.ts'
 import {
   parseCanvas,
+  validateCanvas,
   serializeCanvas,
   nodes,
   edges,
   DEFAULT_STYLE,
   type CanvasData,
   type CanvasStyle,
-} from '@canvai/canvas-kit'
+} from '@better-canvas/core'
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage'])
 
@@ -70,7 +71,7 @@ export async function readBoard(root: string, rel: string): Promise<LoadedBoard>
   const text = await readFile(await vaultPath(root, rel), 'utf8')
   if (!text.trim()) throw new Error('Canvas file is empty or still being written.')
   const parsed = parseCanvas(text)
-  if (!parsed.data || typeof parsed.data !== 'object' || (parsed.data.nodes !== undefined && !Array.isArray(parsed.data.nodes)) || (parsed.data.edges !== undefined && !Array.isArray(parsed.data.edges))) throw new Error('Invalid Canvas file.')
+  validateCanvas(parsed.data)
   return { ...parsed, revision: revisionOf(text) }
 }
 
@@ -96,47 +97,4 @@ export async function createBoard(root: string, rel: string): Promise<void> {
   }
   await mkdir(path.dirname(abs), { recursive: true })
   await writeBoard(root, rel, { nodes: [], edges: [] }, DEFAULT_STYLE)
-}
-
-export async function deleteBoard(root: string, rel: string): Promise<void> {
-  boardAbsPath(root, rel)
-  const abs = await vaultPath(root, rel)
-  const previous = await readFile(abs, 'utf8')
-  const history = path.join(root, '.better-canvas', 'history', revisionOf(rel))
-  await mkdir(history, { recursive: true })
-  await writeFile(path.join(history, `${revisionOf(previous)}.json`), JSON.stringify({ path: rel, savedAt: new Date().toISOString(), text: previous }))
-  await rm(abs)
-  await pruneEmptyDirs(root, path.dirname(abs))
-}
-
-/** Rename or move a board (both are just a path change). Fails if the target exists. */
-export async function renameBoard(root: string, from: string, to: string): Promise<void> {
-  boardAbsPath(root, from)
-  boardAbsPath(root, to)
-  const fromAbs = await vaultPath(root, from)
-  const toAbs = await vaultPath(root, to)
-  if (fromAbs === toAbs) return
-  try {
-    await stat(toAbs)
-    throw new Error(`board already exists: "${to}"`)
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
-  }
-  await mkdir(path.dirname(toAbs), { recursive: true })
-  await rename(fromAbs, toAbs)
-  await pruneEmptyDirs(root, path.dirname(fromAbs))
-}
-
-/** Remove now-empty folders left by a delete/move, up to (not including) the root. */
-async function pruneEmptyDirs(root: string, dir: string): Promise<void> {
-  const rootAbs = path.resolve(root)
-  let cursor = dir
-  while (cursor !== rootAbs && cursor.startsWith(rootAbs + path.sep)) {
-    try {
-      await rmdir(cursor) // fails (ENOTEMPTY) if anything remains — stop there
-    } catch {
-      return
-    }
-    cursor = path.dirname(cursor)
-  }
 }

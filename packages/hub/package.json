@@ -1,10 +1,10 @@
 {
   "name": "@xheldon/better-canvas",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publishConfig": {
     "access": "public"
   },
-  "description": "Local Obsidian Canvas editor with MCP and ChatGPT/Codex plugin support.",
+  "description": "Read-only Obsidian Canvas preview and revision-safe AI editing over MCP.",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -19,14 +19,8 @@
   "keywords": [
     "canvas",
     "json-canvas",
-    "whiteboard",
     "mcp",
-    "claude",
-    "claude-code",
-    "ai-agent",
-    "obsidian",
-    "diagram",
-    "mermaid"
+    "obsidian"
   ],
   "homepage": "https://github.com/Xheldon/better-canvas",
   "repository": {
@@ -41,7 +35,9 @@
     "prepublishOnly": "node build.mjs"
   },
   "devDependencies": {
-    "@canvai/canvas-kit": "0.1.0",
+    "@better-canvas/core": "0.3.0",
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.4",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@types/ws": "^8.5.13",
     "esbuild": "^0.28.2",

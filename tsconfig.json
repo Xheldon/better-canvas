@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
@@ -10,12 +12,21 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "baseUrl": ".",
     "paths": {
-      "@pairsketch/canvas-kit": ["./packages/canvas-kit/src/index.ts"]
+      "@better-canvas/core": [
+        "./packages/core/src/index.ts"
+      ]
     }
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"],
-  "exclude": ["packages/web"]
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts"
+  ],
+  "exclude": [
+    "packages/web"
+  ]
 }

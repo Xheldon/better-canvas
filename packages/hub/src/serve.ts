@@ -1,552 +1,95 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { randomUUID } from 'node:crypto'
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { WebSocketServer, WebSocket } from 'ws'
-import { diffBoards, isEmptyDiff, type CanvasData } from '@canvai/canvas-kit'
-import { createBoard, deleteBoard, listBoards, readBoard, readBoardRaw, renameBoard, writeBoard } from './boards.ts'
-import { createAutoCommit } from './git.ts'
-import { errorDetail, type Reporter } from './report.ts'
-import { addPinned, getActiveBoard, getPinned, removePinned, setActiveBoard } from './state.ts'
-import { appendEvent, readEventsSince, recentAgentWrite } from './events.ts'
-import { appendChat, readChatSince } from './chat.ts'
-import { createSummoner } from './summon.ts'
-import { applyMutations, type Mutation } from './mutate.ts'
+import { listBoards, readBoard } from './boards.ts'
+import { createReference, saveSelection, type Selection } from './selection.ts'
+import { previewFile, previewSnapshot } from './preview.ts'
 import { watchRoot } from './watch.ts'
-import { ConflictError, excerpt, vaultPath } from './storage.ts'
-import { createReference, getSelection, saveSelection, type Selection } from './selection.ts'
 
-/**
- * The serve process: what a human runs (`canvai-hub serve`). Serves the
- * web client, a small REST API, and a WebSocket that pushes "something
- * changed" signals. Agents connect through the separate MCP stdio process;
- * the two processes coordinate purely through files (.canvas, state.json,
- * events.jsonl) — if either is down, the other still works.
- */
-
-export interface ServeOptions {
-  port?: number
-  /** default 127.0.0.1; set 0.0.0.0 (with a token!) to reach it over a VPN/LAN */
-  host?: string
-  /** when set, /api/* and /ws require `Authorization: Bearer <token>` or `?token=` */
-  token?: string
-  /** command template for the handoff button, e.g. 'claude -p {prompt}' */
-  agentCmd?: string
-  /** kill a spawned handoff turn after this long (default 300 000 ms) */
-  handoffTimeoutMs?: number
-  /**
-   * 'spawn': the legacy handoff API spawns a fresh agent turn.
-   * 'signal' (default): only broadcast handoff_requested over the WebSocket — for when
-   * a long-running main session is attached (e.g. via a ws monitor) and
-   * should answer with its full context instead of a stateless turn.
-   */
-  handoffMode?: 'spawn' | 'signal'
-  webDist?: string
-  /** commit every board change to the root's git repo (needs `git init` in root) */
-  autoCommit?: boolean
-  /** error telemetry sink (from --report-url); no-op when unset */
-  reporter?: Reporter
+export interface ServeOptions { port?: number; webDist?: string }
+export interface RunningServer { port: number; close(): Promise<void> }
+const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }
+function json(res: ServerResponse, status: number, value: unknown) {
+  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+  res.end(JSON.stringify(value))
 }
-
-export interface RunningServer {
-  port: number
-  close(): Promise<void>
-}
-
-const SELF_WRITE_WINDOW_MS = 2000
-
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.ico': 'image/x-icon',
-  '.map': 'application/json',
-  '.woff2': 'font/woff2',
-}
-
-/** Any repo file (for file-node rendering): jailed to the root, no dot segments. */
-function repoFilePath(root: string, rel: string): string {
-  if (rel.split('/').some((segment) => segment.startsWith('.'))) {
-    throw new Error('paths with dot segments are not served')
-  }
-  const abs = path.resolve(root, rel)
-  const rootAbs = path.resolve(root) + path.sep
-  if (!abs.startsWith(rootAbs)) throw new Error(`path escapes the root: "${rel}"`)
-  return abs
-}
-
-export async function startServe(root: string, options: ServeOptions = {}): Promise<RunningServer> {
-  const host = options.host ?? '127.0.0.1'
-  const webDist = path.resolve(
-    options.webDist ?? path.join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'web', 'dist'),
-  )
-
-  const snapshots = new Map<string, CanvasData>()
-  // bare 交棒 presses fall back to the last human chat line as the note —
-  // remember which line was already delivered so pressing the button again
-  // doesn't re-send stale text as if it were a fresh instruction
-  let lastHandoffNoteId: string | null = null
-  const selfWrites = new Map<string, number>()
-  const markSelfWrite = (board: string) => selfWrites.set(board, Date.now())
-  const wasSelfWrite = (board: string) => Date.now() - (selfWrites.get(board) ?? 0) <= SELF_WRITE_WINDOW_MS
-  const git = await createAutoCommit(root, options.autoCommit ?? false)
-  const reporter: Reporter = options.reporter ?? { send: () => {} }
-
-  for (const board of await listBoards(root)) {
-    try {
-      snapshots.set(board.path, (await readBoard(root, board.path)).data)
-    } catch {
-      // unreadable board: watcher will retry on next change
-    }
-  }
-
-  const wssClients = new Set<WebSocket>()
-  const broadcast = (message: unknown) => {
-    const payload = JSON.stringify(message)
-    for (const client of wssClients) {
-      if (client.readyState === WebSocket.OPEN) client.send(payload)
-    }
-  }
-
-  const onCanvasChange = async (board: string) => {
-    let data: CanvasData | undefined
-    try {
-      data = (await readBoard(root, board)).data
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') { broadcast({ type: 'sync_error', board, error: 'Canvas is temporarily unreadable. Waiting for a valid saved file.' }); return }
-      data = undefined
-    }
-    if (!data) {
-      if (snapshots.delete(board)) {
-        await appendEvent(root, { origin: 'external', kind: 'board_removed', board })
-        broadcast({ type: 'boards_changed' })
-      }
-      return
-    }
-    const before = snapshots.get(board)
-    snapshots.set(board, data)
-    if (wasSelfWrite(board)) {
-      broadcast({ type: 'board_changed', board })
-      return
-    }
-    if (!before) {
-      await appendEvent(root, { origin: 'external', kind: 'board_created', board })
-      broadcast({ type: 'boards_changed' })
-      broadcast({ type: 'board_changed', board })
-      return
-    }
-    const diff = diffBoards(before, data)
-    if (isEmptyDiff(diff) && JSON.stringify(before) === JSON.stringify(data)) return
-    if (await recentAgentWrite(root, board)) {
-      // the agent already logged its own event; just push the signal
-      broadcast({ type: 'board_changed', board })
-      return
-    }
-    // a human edited outside the web client (Obsidian, editor): moved nodes get pinned
-    if (diff.movedNodes.length > 0) await addPinned(root, board, diff.movedNodes)
-    await appendEvent(root, {
-      origin: 'external',
-      kind: 'board_changed',
-      board,
-      detail: Object.fromEntries(Object.entries(diff).filter(([, ids]) => (ids as string[]).length > 0)),
-    })
-    broadcast({ type: 'board_changed', board })
-  }
-
-  // state.json also carries pins, so it rewrites on every human geometry edit —
-  // only broadcast active_changed when the active board actually changed,
-  // or every pin rewrite yanks connected clients to the active board
-  let lastActive: string | null | undefined
-  void getActiveBoard(root).then((active) => {
-    if (lastActive === undefined) lastActive = active ?? null
-  })
-
-  const watcher = watchRoot(root, (signal) => {
-    if (signal.type === 'state') {
-      void getActiveBoard(root).then((active) => {
-        const value = active ?? null
-        if (value === lastActive) return
-        lastActive = value
-        broadcast({ type: 'active_changed', active: value })
-      })
-      return
-    }
-    if (signal.type === 'chat') {
-      broadcast({ type: 'chat_changed' })
-      return
-    }
-    if (signal.type === 'file') { broadcast({ type: 'file_changed', path: signal.board }); return }
-    if (signal.board) void onCanvasChange(signal.board).catch(e => broadcast({ type: 'sync_error', error: String(e) }))
-  })
-
-  const summoner = createSummoner(root, {
-    agentCmd: options.agentCmd,
-    timeoutMs: options.handoffTimeoutMs,
-    onStatus: (status) => broadcast({ type: 'handoff', status }),
-  })
-
-  // signal mode: the resident session (via its bridge) reports busy through
-  // /api/agent-status — the summoner never runs, so it can't drive the
-  // indicator. TTL guards against a crashed session pinning 思考中 forever.
-  let signalBusy = false
-  let signalBusyTimer: ReturnType<typeof setTimeout> | undefined
-  const setSignalBusy = (busy: boolean) => {
-    signalBusy = busy
-    clearTimeout(signalBusyTimer)
-    if (busy) signalBusyTimer = setTimeout(() => setSignalBusy(false), 20 * 60_000)
-    broadcast({ type: 'handoff', status: busy ? 'started' : 'done' })
-  }
-  const agentBusy = () => summoner.running || signalBusy
-
-  const server: Server = createServer((req, res) => {
-    void route(req, res).catch((error) => {
-      reporter.send('error', { source: 'api', method: req.method, path: req.url?.split('?')[0], ...errorDetail(error) })
-      sendJson(res, error instanceof ConflictError ? 409 : 400, { error: error instanceof Error ? error.message : String(error) })
-    })
-  })
-
-  const authorized = (req: IncomingMessage, url: URL): boolean => {
-    if (!options.token) return true
-    if (req.headers.authorization === `Bearer ${options.token}`) return true
-    return url.searchParams.get('token') === options.token
-  }
-
-  const safeOrigin = (req: IncomingMessage) => {
-    const hostname = (req.headers.host ?? '').split(':')[0]
-    if (host === '127.0.0.1' && !['127.0.0.1', 'localhost'].includes(hostname)) return false
-    return !req.headers.origin || req.headers.origin === `http://${req.headers.host}`
-  }
-
-  async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const url = new URL(req.url ?? '/', 'http://localhost')
-    const { pathname } = url
-    if (!safeOrigin(req)) return sendJson(res, 403, { error: 'Cross-origin access is not allowed.' })
-    res.setHeader('X-Content-Type-Options', 'nosniff')
-    res.setHeader('Referrer-Policy', 'no-referrer')
-
-    if (pathname.startsWith('/api') && !authorized(req, url)) {
-      return sendJson(res, 401, { error: 'unauthorized — pass ?token= or an Authorization: Bearer header' })
-    }
-
-    if (pathname === '/api/boards' && req.method === 'GET') {
-      const [boards, active] = await Promise.all([listBoards(root), getActiveBoard(root)])
-      // root basename: the sidebar names the repo the boards live in, so the
-      // file tree reads as "these are files in YOUR repo"
-      return sendJson(res, 200, { boards, active: active ?? null, root: path.basename(root) })
-    }
-    if (pathname === '/api/boards' && req.method === 'POST') {
-      const body = (await readJson(req)) as { path?: string }
-      if (!body.path) return sendJson(res, 400, { error: 'missing "path"' })
-      await createBoard(root, body.path)
-      snapshots.set(body.path, (await readBoard(root, body.path)).data)
-      markSelfWrite(body.path)
-      git.touch(`create ${body.path}`)
-      await appendEvent(root, { origin: 'human', kind: 'board_created', board: body.path })
-      broadcast({ type: 'boards_changed' })
-      return sendJson(res, 200, { ok: true })
-    }
-    if (pathname === '/api/boards' && req.method === 'DELETE') {
-      const body = (await readJson(req)) as { path?: string }
-      if (!body.path) return sendJson(res, 400, { error: 'missing "path"' })
-      markSelfWrite(body.path)
-      await deleteBoard(root, body.path)
-      snapshots.delete(body.path)
-      await removePinned(root, body.path, [])
-      git.touch(`delete ${body.path}`)
-      await appendEvent(root, { origin: 'human', kind: 'board_deleted', board: body.path })
-      broadcast({ type: 'boards_changed' })
-      return sendJson(res, 200, { ok: true })
-    }
-    if (pathname === '/api/boards/rename' && req.method === 'POST') {
-      const body = (await readJson(req)) as { from?: string; to?: string }
-      if (!body.from || !body.to) return sendJson(res, 400, { error: 'need "from" and "to"' })
-      markSelfWrite(body.from)
-      markSelfWrite(body.to)
-      await renameBoard(root, body.from, body.to)
-      const snap = snapshots.get(body.from)
-      if (snap) snapshots.set(body.to, snap)
-      snapshots.delete(body.from)
-      // move the active pointer and pins with the board
-      if ((await getActiveBoard(root)) === body.from) await setActiveBoard(root, body.to)
-      const pins = await getPinned(root, body.from)
-      if (pins.size > 0) {
-        await addPinned(root, body.to, [...pins])
-        await removePinned(root, body.from, [...pins])
-      }
-      git.touch(`rename ${body.from} → ${body.to}`)
-      await appendEvent(root, { origin: 'human', kind: 'board_renamed', board: body.to, detail: { from: body.from } })
-      broadcast({ type: 'boards_changed' })
-      broadcast({ type: 'active_changed', active: await getActiveBoard(root) })
-      return sendJson(res, 200, { ok: true })
-    }
-    if (pathname === '/api/board' && req.method === 'GET') {
-      const board = url.searchParams.get('path')
-      if (!board) return sendJson(res, 400, { error: 'missing "path"' })
-      const { data, revision } = await readBoard(root, board)
-      const pinned = await getPinned(root, board)
-      return sendJson(res, 200, { path: board, data, revision, pinned: [...pinned] })
-    }
-    if (pathname === '/api/active' && req.method === 'POST') {
-      const body = (await readJson(req)) as { board?: string }
-      if (!body.board) return sendJson(res, 400, { error: 'missing "board"' })
-      await readBoardRaw(root, body.board) // must exist
-      await setActiveBoard(root, body.board)
-      await appendEvent(root, { origin: 'human', kind: 'active_changed', board: body.board })
-      lastActive = body.board
-      broadcast({ type: 'active_changed', active: body.board })
-      return sendJson(res, 200, { ok: true })
-    }
-    if (pathname === '/api/mutate' && req.method === 'POST') {
-      const body = (await readJson(req)) as { board?: string; changes?: Mutation[]; expectedRevision?: string }
-      if (!body.board || !Array.isArray(body.changes) || body.changes.length === 0) {
-        return sendJson(res, 400, { error: 'need "board" and non-empty "changes"' })
-      }
-      if (!body.expectedRevision) return sendJson(res, 428, { error: 'Read the board first and supply expectedRevision.' })
-      const { data, style, revision: beforeRevision } = await readBoard(root, body.board)
-      if (body.expectedRevision !== beforeRevision) throw new ConflictError()
-      const working = structuredClone(data) as CanvasData
-      const outcome = applyMutations(working, body.changes)
-      markSelfWrite(body.board)
-      const revision = await writeBoard(root, body.board, working, style, body.expectedRevision)
-      git.touch(`edit ${body.board}`)
-      snapshots.set(body.board, working)
-      if (outcome.movedIds.length > 0) await addPinned(root, body.board, outcome.movedIds)
-      if (outcome.deletedIds.length > 0) await removePinned(root, body.board, outcome.deletedIds)
-      await appendEvent(root, {
-        origin: 'human',
-        kind: 'mutate',
-        board: body.board,
-        detail: { summary: outcome.summary },
-      })
-      broadcast({ type: 'board_changed', board: body.board })
-      return sendJson(res, 200, { ok: true, summary: outcome.summary, revision })
-    }
-    if (pathname === '/api/selection' && req.method === 'POST') {
-      return sendJson(res, 200, await saveSelection(root, await readJson(req) as Omit<Selection, 'updatedAt'>))
-    }
-    if (pathname === '/api/selection' && req.method === 'GET') {
-      return sendJson(res, 200, await getSelection(root, url.searchParams.get('sessionId') ?? undefined))
-    }
-    if (pathname === '/api/reference' && req.method === 'POST') {
-      return sendJson(res, 200, await createReference(root, await readJson(req) as Omit<Selection, 'updatedAt'>))
-    }
-    if (pathname === '/api/events' && req.method === 'GET') {
-      const since = url.searchParams.get('since') ?? undefined
-      return sendJson(res, 200, await readEventsSince(root, since))
-    }
-    if (pathname === '/api/chat' && req.method === 'GET') {
-      const since = url.searchParams.get('since') ?? undefined
-      return sendJson(res, 200, await readChatSince(root, since))
-    }
-    if (pathname === '/api/chat' && req.method === 'POST') {
-      const body = (await readJson(req)) as { text?: string; board?: string }
-      if (!body.text || body.text.trim() === '') return sendJson(res, 400, { error: 'missing "text"' })
-      const message = await appendChat(root, { from: 'human', text: body.text.trim(), board: body.board })
-      broadcast({ type: 'chat_changed' })
-      return sendJson(res, 200, { ok: true, id: message.id })
-    }
-    if (pathname === '/api/upload' && req.method === 'POST') {
-      // image attachment: raw body (client compresses to ~500KB first) →
-      // assets/<stamp>-<name>. Returns the repo-relative path for a file card.
-      const rawName = url.searchParams.get('name') ?? 'image.jpg'
-      const ext = (rawName.split('.').pop() ?? '').toLowerCase()
-      if (!['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-        return sendJson(res, 400, { error: `unsupported image type ".${ext}"` })
-      }
-      const base = rawName
-        .slice(0, rawName.length - ext.length - 1)
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 40)
-      const chunks: Buffer[] = []
-      let total = 0
-      for await (const chunk of req) {
-        total += (chunk as Buffer).length
-        if (total > 8 * 1024 * 1024) return sendJson(res, 413, { error: 'image too large (8MB cap)' })
-        chunks.push(chunk as Buffer)
-      }
-      if (total === 0) return sendJson(res, 400, { error: 'empty body' })
-      const stamp = new Date()
-        .toISOString()
-        .slice(0, 19)
-        .replace(/[-:T]/g, '')
-      const rel = `assets/${stamp}-${randomUUID().slice(0, 8)}-${base || 'image'}.${ext}`
-      const absolute = await vaultPath(root, rel)
-      await mkdir(path.dirname(absolute), { recursive: true })
-      await writeFile(absolute, Buffer.concat(chunks), { flag: 'wx' })
-      return sendJson(res, 200, { ok: true, path: rel })
-    }
-    if (pathname === '/api/debug' && req.method === 'POST') {
-      // ?debugtouch remote diagnostics: the client streams raw touch events
-      // here so gesture bugs on real devices can be read server-side
-      const body = (await readJson(req)) as { lines?: string[] }
-      if (Array.isArray(body.lines) && body.lines.length > 0 && body.lines.length <= 500) {
-        const file = path.join(root, '.canvai', 'debug.jsonl')
-        await appendFile(file, body.lines.map((l) => String(l).slice(0, 300)).join('\n') + '\n', 'utf8')
-      }
-      return sendJson(res, 200, { ok: true })
-    }
-    if (pathname === '/api/report' && req.method === 'POST') {
-      // the web client forwards its own uncaught errors here → telemetry sink,
-      // so browser-side breakage reaches the operator during early testing
-      const body = (await readJson(req)) as { message?: string; stack?: string; where?: string }
-      if (body.message) {
-        reporter.send('client-error', {
-          source: 'browser',
-          message: String(body.message).slice(0, 500),
-          stack: body.stack ? String(body.stack).split('\n').slice(0, 4).join('\n').slice(0, 800) : undefined,
-          where: body.where ? String(body.where).slice(0, 120) : undefined,
-        })
-      }
-      return sendJson(res, 200, { ok: true })
-    }
-    if (pathname === '/api/agent-status' && req.method === 'POST') {
-      const body = (await readJson(req)) as { busy?: boolean }
-      if (typeof body.busy !== 'boolean') return sendJson(res, 400, { error: 'missing boolean "busy"' })
-      setSignalBusy(body.busy)
-      return sendJson(res, 200, { ok: true })
-    }
-    if (pathname === '/api/handoff' && req.method === 'POST') {
-      const body = (await readJson(req)) as { note?: string }
-      let note = body.note
-      if (!note) {
-        const { messages } = await readChatSince(root)
-        const last = messages.filter((m) => m.from === 'human').at(-1)
-        if (last && last.id !== lastHandoffNoteId) {
-          note = last.text
-          lastHandoffNoteId = last.id
-        }
-      }
-      broadcast({ type: 'handoff_requested', note: note ?? null })
-      if ((options.handoffMode ?? 'signal') === 'signal') {
-        return sendJson(res, 202, { ok: true, mode: 'signal' })
-      }
-      if (summoner.running) return sendJson(res, 409, { error: 'an agent turn is already running' })
-      void summoner.handoff(body.note)
-      return sendJson(res, 202, { ok: true, mode: 'spawn' })
-    }
-    if (pathname === '/api/file' && req.method === 'GET') {
-      const rel = url.searchParams.get('path')
-      if (!rel) return sendJson(res, 400, { error: 'missing "path"' })
-      let abs: string
-      try {
-        abs = await vaultPath(root, rel)
-      } catch (e) {
-        return sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
-      }
-      let buffer: Buffer
-      try {
-        buffer = await readFile(abs)
-      } catch {
-        return sendJson(res, 404, { error: `not found: ${rel}` })
-      }
-      if (url.searchParams.get('raw') === '1') {
-        // assets/ holds upload-stamped, content-immutable files — let the
-        // browser cache them hard so an image card doesn't re-download on
-        // every select/board-reload (field: "有圖的卡一點擊就重新下載").
-        // Other repo files can change, so they only get revalidation.
-        const relNorm = rel.replace(/\\/g, '/')
-        const cache = 'no-cache'
-        res.writeHead(200, {
-          'content-type': MIME[path.extname(abs).toLowerCase()] ?? 'application/octet-stream',
-          'cache-control': cache,
-          'content-security-policy': "sandbox; default-src 'none'",
-        })
-        return void res.end(buffer)
-      }
-      if (buffer.length > 512 * 1024) return sendJson(res, 413, { error: 'file too large to inline' })
-      return sendJson(res, 200, { path: rel, text: excerpt(buffer.toString('utf8'), url.searchParams.get('subpath') ?? undefined) })
-    }
-
-    if (req.method === 'GET') return serveStatic(pathname, res)
-    sendJson(res, 404, { error: 'not found' })
-  }
-
-  async function serveStatic(pathname: string, res: ServerResponse): Promise<void> {
-    const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
-    const abs = path.resolve(webDist, rel)
-    if (abs !== webDist && !abs.startsWith(webDist + path.sep)) {
-      return sendJson(res, 404, { error: 'not found' })
-    }
-    try {
-      const file = await readFile(abs)
-      const ext = path.extname(abs)
-      res.writeHead(200, {
-        'content-type': MIME[ext] ?? 'application/octet-stream',
-        // hashed assets can cache forever; the shell must revalidate so new builds land on reload
-        'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
-      })
-      res.end(file)
-    } catch {
-      if (pathname === '/') {
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        res.end(
-          '<!doctype html><meta charset="utf-8"><title>canvai</title>' +
-            '<body style="font-family:system-ui;padding:3rem;max-width:40rem">' +
-            '<h1>canvai hub is running</h1>' +
-            '<p>The web client is not built yet. Run <code>npm run web:build</code> in the canvai repo, then reload.</p>' +
-            '<p>The API is live: <a href="/api/boards">/api/boards</a></p>',
-        )
-        return
-      }
-      sendJson(res, 404, { error: 'not found' })
-    }
-  }
-
-  const wss = new WebSocketServer({ server, path: '/ws' })
-  wss.on('connection', (socket, req) => {
-    if (!safeOrigin(req) || !authorized(req, new URL(req.url ?? '/', 'http://localhost'))) {
-      socket.close(4401, 'unauthorized')
-      return
-    }
-    wssClients.add(socket)
-    socket.on('close', () => wssClients.delete(socket))
-    void (async () => {
-      const active = await getActiveBoard(root)
-      // busy: reconnecting clients missed handoff broadcasts while away —
-      // without this a stale 思考中 indicator survives forever
-      socket.send(JSON.stringify({ type: 'hello', active: active ?? null, busy: agentBusy() }))
-    })()
-  })
-
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.port ?? 5199, host, resolve) }).catch(e => { watcher.close(); wss.close(); throw e })
-  const address = server.address()
-  const port = typeof address === 'object' && address ? address.port : (options.port ?? 5199)
-
-  return {
-    port,
-    async close() {
-      watcher.close()
-      await git.flush() // don't drop a debounced commit on shutdown
-      for (const client of wssClients) client.terminate()
-      wss.close()
-      await new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve())))
-    },
-  }
-}
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-  res.end(JSON.stringify(body))
-}
-
-async function readJson(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = []
+async function body(req: IncomingMessage) {
   let size = 0
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length
-    if (size > 5 * 1024 * 1024) throw new Error('body too large')
-    chunks.push(chunk as Buffer)
+  const chunks: Buffer[] = []
+  for await (const part of req) {
+    size += part.length
+    if (size > 128 * 1024) throw new Error('Request too large.')
+    chunks.push(Buffer.from(part))
   }
-  const text = Buffer.concat(chunks).toString('utf8')
-  return text === '' ? {} : JSON.parse(text)
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+/** Loopback preview. No route can write, upload, rename, delete or edit vault content. */
+export async function startServe(root: string, options: ServeOptions = {}): Promise<RunningServer> {
+  let port = 0
+  function permitted(req: IncomingMessage) {
+    const host = req.headers.host
+    const origin = req.headers.origin
+    return (host === '127.0.0.1:' + port || host === 'localhost:' + port)
+      && (!origin || origin === 'http://' + host)
+      && !['cross-site'].includes(req.headers['sec-fetch-site'] as string)
+  }
+  const server = createServer((req, res) => {
+    void (async () => {
+      res.setHeader('x-content-type-options', 'nosniff')
+      res.setHeader('referrer-policy', 'no-referrer')
+      if (!permitted(req)) return json(res, 403, { error: 'Only same-origin local preview requests are accepted.' })
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+      const route = url.pathname
+      if (route.startsWith('/api/')) {
+        if (req.method === 'POST' && ['/api/selection', '/api/reference'].includes(route)) {
+          if (!req.headers['content-type']?.startsWith('application/json')) return json(res, 415, { error: 'Expected JSON.' })
+          const input = await body(req) as Omit<Selection, 'updatedAt'>
+          // Only view metadata is persisted; neither endpoint can edit a Canvas.
+          return json(res, 200, route === '/api/selection' ? await saveSelection(root, input) : await createReference(root, input))
+        }
+        if (req.method !== 'GET') return json(res, 405, { error: 'Read-only preview. Content changes are available only through MCP.' })
+        if (route === '/api/preview') return json(res, 200, await previewSnapshot(root, url.searchParams.get('board') ?? undefined))
+        if (route === '/api/boards') return json(res, 200, await listBoards(root))
+        if (route === '/api/board') return json(res, 200, await readBoard(root, url.searchParams.get('path') ?? ''))
+        if (route === '/api/file') return json(res, 200, await previewFile(root, url.searchParams.get('path') ?? '', url.searchParams.get('subpath') ?? undefined))
+        return json(res, 404, { error: 'Unknown route.' })
+      }
+      if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'Read-only preview.' })
+      if (!options.webDist) return json(res, 404, { error: 'Build the web preview first.' })
+      const relative = decodeURIComponent(route === '/' ? '/index.html' : route)
+      const file = path.resolve(options.webDist, '.' + relative)
+      if (!file.startsWith(path.resolve(options.webDist) + path.sep) || relative.split('/').some(s => s.startsWith('.'))) return json(res, 403, { error: 'Invalid path.' })
+      const bytes = await readFile(file)
+      res.setHeader('content-security-policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:" + port + " ws://localhost:" + port + "; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'")
+      res.writeHead(200, { 'content-type': mime[path.extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' })
+      res.end(req.method === 'HEAD' ? undefined : bytes)
+    })().catch((error: unknown) => {
+      const e = error as Error & { status?: number; code?: string }
+      json(res, e.status ?? (e.code === 'ENOENT' ? 404 : 400), { error: e.message })
+    })
+  })
+  const sockets = new WebSocketServer({ noServer: true })
+  server.on('upgrade', (req, socket, head) => {
+    if (!permitted(req) || req.url !== '/ws') { socket.destroy(); return }
+    sockets.handleUpgrade(req, socket, head, ws => sockets.emit('connection', ws, req))
+  })
+  const watcher = watchRoot(root, signal => {
+    const message = JSON.stringify({ type: signal.type === 'canvas' ? 'board_changed' : 'file_changed', path: signal.board })
+    for (const socket of sockets.clients) if (socket.readyState === WebSocket.OPEN) socket.send(message)
+  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(options.port ?? 0, '127.0.0.1', () => { port = (server.address() as { port: number }).port; resolve() })
+    })
+  } catch (e) { watcher.close(); sockets.close(); throw e }
+  return { port, async close() {
+    watcher.close()
+    for (const client of sockets.clients) client.terminate()
+    sockets.close()
+    server.closeAllConnections()
+    await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()))
+  } }
 }

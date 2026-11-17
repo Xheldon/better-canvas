@@ -1,13 +1,20 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "better-canvas",
-  "version": "0.2.0",
-  "description": "An MCP-enabled Obsidian Canvas editor for ChatGPT and Codex. Preview local canvases, reference selected cards, and sync edits with your vault.",
-  "author": { "name": "Xheldon" },
+  "version": "0.3.0",
+  "description": "Read-only Obsidian Canvas previews and AI editing over MCP. Select cards and send requests through an MCP App panel.",
+  "author": {
+    "name": "Xheldon"
+  },
   "homepage": "https://github.com/Xheldon/better-canvas",
   "repository": "https://github.com/Xheldon/better-canvas",
   "license": "MIT",
-  "keywords": ["obsidian", "canvas", "mcp", "local-first"],
+  "keywords": [
+    "obsidian",
+    "canvas",
+    "mcp",
+    "local-first"
+  ],
   "extensions": {
     "com.openai": {
       "requires_local_executor": true,
@@ -15,12 +22,19 @@
       "interface": {
         "displayName": "Better Canvas",
         "shortDescription": "Edit Obsidian canvases with AI",
-        "longDescription": "Open a local vault, preview its Canvas files, reference selected cards in your existing conversation, and edit through MCP. Based on canvai.",
+        "longDescription": "View local Canvas files without moving or editing them. Select cards, describe changes in the bottom composer, and let AI update the files through MCP. Integrated sending requires an MCP Apps host.",
         "developerName": "Xheldon",
         "category": "Productivity",
-        "capabilities": ["Read", "Write", "Interactive"],
+        "capabilities": [
+          "Read",
+          "Write",
+          "Interactive"
+        ],
         "brandColor": "#7056BF",
-        "defaultPrompt": ["Open an Obsidian Canvas from my local vault", "Help me revise the cards I selected"]
+        "defaultPrompt": [
+          "Open an Obsidian Canvas from my local vault",
+          "Help me revise the cards I selected"
+        ]
       }
     }
   }

@@ -1,8 +1,12 @@
-Better Canvas is derived from canvai (https://github.com/chuck00lin/canvai),
-licensed under the MIT License. The original license is preserved in LICENSE
-and the upstream Git history is retained.
+Better Canvas copyright (c) 2026 Xheldon.
 
-Better Canvas modifications copyright (c) 2026 Xheldon.
+The JSON Canvas parsing/serialization code is adapted from canvai
+(https://github.com/chuck00lin/canvai), copyright (c) 2026 pairsketch
+contributors, under the MIT License preserved in LICENSE.
 
-The editor uses React Flow (@xyflow/react), React, marked, DOMPurify, Mermaid,
-ELK, and the Model Context Protocol SDK. Their respective licenses apply.
+The project originated as a fork; that Git history remains available.
+The version 0.3 application, React HTML/SVG viewer, read-only interactions
+and MCP App composer replace the previous framework and editor.
+
+React, Vite, TypeScript, marked, DOMPurify, the Model Context Protocol SDK
+and MCP Apps SDK are used under their respective licenses.

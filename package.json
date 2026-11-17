@@ -13,15 +13,17 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p packages/web",
     "hub": "node packages/hub/src/cli.ts",
     "serve": "node packages/hub/src/cli.ts serve",
-    "web:dev": "npm run dev -w @canvai/web",
-    "web:build": "npm run build -w @canvai/web",
-    "setup": "node scripts/setup.mjs",
+    "web:dev": "npm run dev -w @better-canvas/web",
+    "web:build": "npm run build -w @better-canvas/web",
     "build": "npm run build -w @xheldon/better-canvas",
     "plugin:pack": "node scripts/package-plugin.mjs",
     "test:package": "node scripts/test-package.mjs"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.12",
     "@types/node": "^22.10.0",
+    "jsdom": "^31.0.1",
     "typescript": "^5.6.0",
     "vitest": "^5.1.0"
   }

@@ -1,6 +1,6 @@
 {
-  "name": "@canvai/web",
-  "version": "0.1.0",
+  "name": "@better-canvas/web",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,10 +9,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@xyflow/react": "^12.3.0",
+    "@modelcontextprotocol/ext-apps": "^2.0.4",
     "dompurify": "^3.2.0",
     "marked": "^15.0.0",
-    "mermaid": "^12.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

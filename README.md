@@ -1,86 +1,80 @@
 # Better Canvas
 
-An MCP-enabled Obsidian Canvas editor and desktop ChatGPT/Codex plugin, based on [canvai](https://github.com/chuck00lin/canvai).
+A read-only Obsidian Canvas viewer with AI editing over MCP.
 
-Open a local vault in the browser, reference selected cards in your existing conversation, and let an AI edit the original `.canvas` files. No additional chat sidebar or Obsidian plugin is required.
+Select cards, describe a change in the bottom composer, and let the AI in your current conversation update the source files. The preview follows the files on disk.
 
-![Better Canvas with two selected cards and the AI context menu](docs/images/better-canvas.jpg)
+Built with **React, TypeScript and Vite**. Cards use an HTML layer and connections use SVG. There is no embedded canvas editor, automatic layout engine, separate chat sidebar, or spawned AI process.
 
-## Quick start
+![Read-only preview with selected-card references and a bottom composer](docs/images/better-canvas.jpg)
 
-Requires Node.js 22.18 or later and npm.
+## How it works
+
+1. Open the vault folder you choose.
+2. Open a Canvas in the conversation's MCP App panel.
+3. Click a card, Shift-click more cards, or Shift-drag on the background to select several.
+4. Selected cards appear as reference chips above the bottom input.
+5. Describe the change and press Enter. Shift+Enter inserts a newline; IME confirmation does not send.
+6. The host receives a message containing an immutable card reference. AI reads the reference, applies revision-checked MCP edits, and the preview refreshes.
+
+The browser cannot move, resize, edit, delete, create, upload or paste cards. It has no content-writing HTTP endpoints. View metadata such as selection is stored separately.
+
+### Two ways to view
+
+| Surface | Preview and selection | Send to current chat |
+| --- | --- | --- |
+| MCP App panel in a compatible host | Yes | Uses the standard `ui/message` bridge |
+| Local browser / localhost preview | Yes | Disabled: ordinary web pages do not have the host chat bridge |
+
+The composer only reports a successful send after the host acknowledges it. A failed send retains the draft. Sending a request does not mean AI has applied it yet.
+
+The plugin declares a conversation-panel entrypoint through the OpenAI MCP UI extension. Host support and plugin loading determine whether that entrypoint is available. Installing a local plugin does not automatically add its tools to an already-running conversation.
+
+## Install
+
+Requires **Node.js 22.18 or later**.
+
+Download and unzip the [latest release](https://github.com/Xheldon/better-canvas/releases). The archive contains the complete server, browser UI and MCP App UI; no dependency installation is required.
+
+For the Codex desktop local-plugin workflow:
 
 ```sh
-git clone https://github.com/Xheldon/better-canvas.git
-cd better-canvas
-npm ci
-npm run build
-node packages/hub/dist/better-canvas.mjs serve --root /absolute/path/to/vault
+codex plugin marketplace add /absolute/path/to/better-canvas --json
+codex plugin add better-canvas@better-canvas-local --json
 ```
 
-Open the local address printed by the command. To try the generic sample safely, copy `examples/vault` to a separate folder and point `--root` at that copy.
+Then enable the plugin in a conversation. Ask AI to open the vault folder you provide, then open a Canvas using `open_canvas`. The folder is not hardcoded or uploaded.
 
-## ChatGPT / Codex plugin
-
-```sh
-npm run plugin:pack
-```
-
-This produces `dist/better-canvas-0.2.0.zip`, including the MCP server, browser assets, manifests and skill. The source repo includes a local marketplace at `.agents/plugins/marketplace.json`; build and package before installing from it. Only the allowlisted package folder is installed, not the source checkout or local test files. The packaged plugin requires Node.js on the user's computer but does not require `node_modules` or an AI API key.
-
-For Codex CLI, install the built local package with:
-
-```sh
-codex plugin marketplace add .
-codex plugin add better-canvas@better-canvas-local
-```
-
-For a prebuilt release, extract the ZIP and run those two commands from the extracted `better-canvas` folder instead; no build or npm install is needed. Both the source checkout and release include a local marketplace. Desktop clients that support local marketplaces can discover it through their Plugins Directory; restart the client if necessary, select the **Better Canvas** source, and install the plugin there. Client availability varies by version and surface.
-
-Then start a new chat and ask Better Canvas to open your vault. The AI calls `open_vault`, `start_preview`, and opens the returned URL in its browser panel. The release has been tested through a real stdio MCP client; installation into the current ChatGPT/Codex chat is not automatic.
-
-GitHub distribution is separate from OpenAI's public plugin directory. A public directory listing is **not** included. See the official [plugin packaging](https://developers.openai.com/plugins/build/plugins) and [desktop-only plugin](https://developers.openai.com/plugins/deploy/desktop-only) instructions for current installation and submission requirements.
-
-For any other MCP client, configure a stdio server:
+For other MCP clients, register a stdio server:
 
 ```json
 {
   "mcpServers": {
     "better-canvas": {
       "command": "node",
-      "args": ["/absolute/path/to/better-canvas/packages/hub/dist/better-canvas.mjs", "mcp", "--select-vault"]
+      "args": [
+        "/absolute/path/to/better-canvas/packages/hub/dist/better-canvas.mjs",
+        "mcp",
+        "--select-vault"
+      ]
     }
   }
 }
 ```
 
-`--select-vault` starts without opening any vault. The `open_vault` tool selects the folder for the current MCP process. Alternatively, pass `mcp --root /absolute/path/to/vault` for a fixed folder.
+Clients without MCP Apps can use the MCP tools and local read-only preview. The standalone composer does not pretend to send messages.
 
-## Point at a card, keep talking in your chat
-
-1. Select a card, or hold Shift and drag to select several.
-2. Right-click → **Ask AI about selection**.
-3. Copy the reference into your chat and describe the change.
-4. The AI calls `read_reference`, reads the current board revision, and edits only the requested nodes.
-
-`get_selection` also exposes the current browser selection. Native browser annotations can identify DOM elements through stable card IDs. The page does not claim access to the host's chat input or its native attachment format.
-
-## What is included
-
-- Compact, searchable Canvas file tree and a canvas-focused browser interface.
-- Node references, multi-selection, and MCP tools for cards, connections and linked notes.
-- Saved-file synchronization with Obsidian, including linked Markdown and images.
-- Required revision checks, recoverable browser drafts, and local recovery history.
-- Original coordinates, dimensions, node order, nested groups, connection sides and endpoint arrows.
-- Heading and paragraph-block excerpts for linked Markdown.
-- Preservation of unknown JSON fields and existing file formatting during edits.
-
-Rendering follows JSON Canvas geometry. It does **not** reproduce arbitrary Obsidian themes, plugin-generated content, or every Markdown extension. See [compatibility and synchronization](docs/compatibility.md) for the precise boundaries and [privacy](docs/privacy.md) for local data handling.
-
-## Development
+## Local development
 
 ```sh
 npm ci
+npm run build
+node packages/hub/dist/better-canvas.mjs serve --root /absolute/path/to/vault --port 5199
+```
+
+Open `http://127.0.0.1:5199`. The server binds to loopback only. Use `?lang=en` or `?lang=zh` to override the browser language.
+
+```sh
 npm run typecheck
 npm test
 npm run build
@@ -88,8 +82,41 @@ npm run plugin:pack
 npm run test:package
 ```
 
-See [verification scope](docs/testing.md) for automated and manual acceptance checks.
+## MCP tools
 
-The upstream canvas engine, MCP operations, React Flow editor, and file watcher are retained and extended. `packages/canvas-kit` contains file-format and layout operations; `packages/hub` contains local services and MCP; `packages/web` contains the editor.
+- **Scope:** `open_vault`, `list_boards`, `set_active_board`, `get_active_board`.
+- **View:** `open_canvas` (MCP App), `start_preview` (browser), `get_preview`, `preview_file`.
+- **Reference:** `save_selection`, `get_selection`, `create_reference`, `read_reference`.
+- **Read/write through AI:** `read_board`, `apply_ops`, `create_board`, `read_note`, `update_note`.
 
-MIT. Original canvai license and Git history are retained. See [NOTICE](NOTICE).
+Write tools are model-only in the MCP Apps visibility metadata. A normal MCP client remains responsible for authorizing its own tool calls.
+
+Example after `read_board`:
+
+```json
+{
+  "board": "Planning.canvas",
+  "expectedRevision": "<revision returned by read_board>",
+  "ops": [
+    { "op": "update_node", "id": "card-id", "patch": { "text": "Updated text" } }
+  ]
+}
+```
+
+Operations include adding, updating and deleting nodes and edges. Adding needs complete records and explicit coordinates. Deleting a node also removes its attached edges. There is no implicit layout. Version 0.3 replaces the former semantic/rail operations; update clients to use `patch` objects.
+
+## Fidelity and storage
+
+Original IDs, coordinates, dimensions, array order, group boundaries, edge sides and arrow ends are retained. Unknown JSON properties survive targeted edits. File serialization retains the detected indentation, colon spacing and final newline convention.
+
+Rendering is structurally compatible with JSON Canvas, not a copy of Obsidian's renderer. Fonts, line wrapping, curve routing, custom themes, embeds and third-party plugin visuals may differ. See [compatibility](docs/compatibility.md).
+
+Files on disk are the source of truth. Changes saved in Obsidian refresh the preview; MCP edits update those same files. Native unsaved buffers do not participate in our file lock. Revision checks reject observed competing changes and recovery copies are kept, but cross-application atomic transactions are not guaranteed.
+
+See [privacy](docs/privacy.md) and [testing](docs/testing.md).
+
+## Provenance
+
+The project began as a canvai fork. Version 0.3 replaces its application framework, renderer, editor interactions, layout system and agent spawning. The JSON Canvas parsing/formatting code retains ideas and portions from the MIT-licensed project. The license and attribution remain in [NOTICE](NOTICE); the Git history is retained.
+
+MIT License.

@@ -47,7 +47,7 @@
       "width": 390,
       "height": 180,
       "color": "6",
-      "text": "# Make space for the idea\n\nA shared canvas should preserve your layout and keep the conversation where it belongs.\n\n**Try:** select this card, then right-click."
+      "text": "# Make space for the idea\n\nKeep the original layout and let AI make focused changes.\n\n**Try:** click this card to reference it below."
     },
     {
       "id": "review",
@@ -56,7 +56,7 @@
       "y": 390,
       "width": 390,
       "height": 175,
-      "text": "# What would you change?\n\n- Select a card, or Shift-select several.\n- Ask AI about the selection.\n- Add your request in the existing chat.\n\nYour files stay in your vault."
+      "text": "# One direction, by design\n\nSelect cards \u2192 describe a change \u2192 AI updates the file \u2192 the preview refreshes.\n\nYour files stay in your vault."
     }
   ],
   "edges": [

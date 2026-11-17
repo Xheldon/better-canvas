@@ -44,7 +44,7 @@ describe('browser, MCP and vault interoperability', () => {
     await post('/api/selection', { ...selection, nodeIds: ['b'], edgeIds: [] })
     const resolved = result(await client!.callTool({ name: 'read_reference', arguments: { id: ref.id } }))
     expect(resolved.nodeIds).toEqual(['a','b'])
-    const edit = await client!.callTool({ name: 'apply_ops', arguments: { board: 'Board.canvas', expectedRevision: before.revision, ops: [{ op:'update_node', id:'a', text:'Changed through MCP' }] } })
+    const edit = await client!.callTool({ name: 'apply_ops', arguments: { board: 'Board.canvas', expectedRevision: before.revision, ops: [{ op:'update_node', id:'a', patch:{text:'Changed through MCP'} }] } })
     expect(edit.isError).not.toBe(true)
     const next = await get()
     expect(next.data.nodes[0]).toMatchObject({ x:-130, y:210, width:333, height:111, pluginField:42, text:'Changed through MCP' })
@@ -58,21 +58,21 @@ describe('browser, MCP and vault interoperability', () => {
     expect((await post('/api/reference', selection)).status).toBe(409)
   })
 
-  it('rejects stale browser/MCP writes and simultaneous writers without losing either saved version', async () => {
+  it('blocks browser writes and rejects stale or competing MCP edits', async () => {
     const { root, get, post } = await setup()
     const before = await get()
     const external = { ...before.data, external: true }
     await writeFile(path.join(root, 'Board.canvas'), JSON.stringify(external))
     const stale = await post('/api/mutate', { board:'Board.canvas', expectedRevision:before.revision, changes:[{kind:'set_text',id:'a',text:'stale'}] })
-    expect(stale.status).toBe(409)
-    const ai = await client!.callTool({ name:'apply_ops', arguments:{ board:'Board.canvas', expectedRevision:before.revision, ops:[{op:'update_node',id:'a',text:'stale AI'}] } })
+    expect(stale.status).toBe(405)
+    const ai = await client!.callTool({ name:'apply_ops', arguments:{ board:'Board.canvas', expectedRevision:before.revision, ops:[{op:'update_node',id:'a',patch:{text:'stale AI'}}] } })
     expect(ai.isError).toBe(true)
     expect((await get()).data).toEqual(external)
     const version = (await get()).revision
-    const responses = await Promise.all(['one','two'].map(text => post('/api/mutate', { board:'Board.canvas',expectedRevision:version,changes:[{kind:'set_text',id:'a',text}] })))
-    expect(responses.map(r=>r.status).sort()).toEqual([200,409])
+    const responses = await Promise.all(['one','two'].map(text => client!.callTool({ name:'apply_ops', arguments:{board:'Board.canvas',expectedRevision:version,ops:[{op:'update_node',id:'a',patch:{text}}]} })))
+    expect(responses.filter(r=>r.isError).length).toBe(1)
     expect((await get()).data.external).toBe(true)
-    expect((await post('/api/mutate',{board:'Board.canvas',changes:[{kind:'set_text',id:'a',text:'no revision'}]})).status).toBe(428)
+    expect((await post('/api/mutate',{board:'Board.canvas',changes:[{kind:'set_text',id:'a',text:'no revision'}]})).status).toBe(405)
   })
 
   it('refreshes note files, detects external Canvas changes, and serves only a heading', async () => {

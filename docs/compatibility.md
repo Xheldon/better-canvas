@@ -1,30 +1,39 @@
-# Compatibility and synchronization
+# Compatibility
 
-Better Canvas is a local browser editor and desktop ChatGPT/Codex plugin based on canvai. No Obsidian plugin is required. Both applications use the same `.canvas` files; no second content database is created.
+## JSON Canvas 1.0
 
-## Layout
+The preview reads the original x, y, width and height directly. It does not assign a grid, infer new positions, reparent cards or run layout. Nodes render in source array order. Groups use their original rectangles, including nested and overlapping rectangles.
 
-The renderer uses the file's `x`, `y`, `width`, `height`, node-array stacking order, groups (including geometric nesting), connection sides, labels, endpoint arrows, colors, and group background images. Opening a board does not run automatic layout or rewrite it. Negative coordinates are supported. Moving a group also persists its descendants' absolute positions.
+Supported:
+- Text cards rendered as sanitized Markdown, local Markdown/text file cards (including heading and block excerpts), raster image cards, URL cards and group labels.
+- Negative coordinates, original dimensions and six preset colors or hex colors.
+- Edge endpoints, sides, labels, fromEnd and toEnd (including no arrow and arrows at both ends).
+- Pan, pointer-centered zoom, click/Shift-click selection, Shift-drag selection, fit all and focus selected.
+- Space+drag or middle-button pan; Cmd/Ctrl+A selects cards; Escape clears selection. None of the editing shortcuts write content.
 
-This is structural/layout compatibility, **not pixel-identical rendering**. Obsidian's theme CSS, fonts, line wrapping, exact edge curves, viewport state, custom plugin shapes, and plugin-generated views are not copied. JSON Canvas deliberately leaves the exact six preset color values to the renderer. Unknown fields are preserved when editing but may not be rendered. Unsupported attachments show a placeholder rather than being removed.
+Differences from Obsidian:
+- Fonts, line wrapping and SVG curve routing can differ.
+- Obsidian themes, CSS snippets, plugin node renderers and Advanced Canvas visuals are not reproduced.
+- Internal wiki links are displayed as text; external links do not embed websites.
+- SVG/PDF/audio/video and remote images are not rendered as file previews. Raster images are limited to 5 MB, notes to 2 MB.
+- Mermaid fences appear as code.
+- Group backgrounds support basic local raster images; Obsidian repeat/ratio styling is not reproduced exactly.
+- Nodes outside the visible viewport are present in the scene. Large vaults or thousands of cards have not been performance-qualified.
 
-Linked Markdown supports ATX heading excerpts and paragraph block IDs. Missing anchors show an error. Full Obsidian Markdown semantics, transclusion, Dataview and other plugin output are not implemented.
+Unknown JSON fields are retained when a supported field is edited. Unsupported visual properties are preserved, not interpreted. Invalid geometry or dangling edges are reported rather than silently repaired.
 
-## Sync and conflict handling
+## Source of truth
 
-- External saved `.canvas` edits trigger a browser refresh; linked notes and image files have separate change notifications.
-- Browser and MCP changes write to the same original files.
-- Card, connection and note updates supply the revision from its last read. Stale writes return a conflict instead of silently overwriting.
-- Better Canvas writers use per-file locks and temporary files. Previous file contents are stored under `.better-canvas/history/<path hash>/<revision>.json` for manual recovery. Entries contain the original path and exact text. They remain local and are not pruned automatically.
-- An edit rejected in the browser is shown as a recoverable draft. External reloads clear whole-board undo history to avoid undoing someone else's changes.
-- Notes and boards are not one multi-file transaction.
+Canvas and linked note files on disk are authoritative. Browser selection and references are stored in .better-canvas and do not alter those files. A reference snapshots exact IDs and the version visible when the request was sent.
 
-Obsidian does not participate in the Better Canvas lock. Checks immediately before replacement catch ordinary saved-file conflicts, but cannot provide a cross-application atomic transaction or observe an Obsidian edit that has not yet been saved. Finish an edit in one application before editing the same card in the other. Recovery history is not a substitute for a vault backup.
+MCP writes require expectedRevision. Obsidian does not take our lock; concurrent native unsaved edits are not a shared transaction. Keep only one editor actively saving a file while AI applies changes.
 
-## AI handoff
+## Host integration
 
-Click a card, Shift-select multiple cards, then right-click → **Ask AI about selection**. Copy the stable reference into the existing chat. The AI resolves it with `read_reference`. `get_selection` provides the current browser selection; multiple tabs require a session ID.
+open_canvas registers a text/html;profile=mcp-app resource and a conversation-panel entrypoint. The UI communicates through the standard MCP Apps SDK.
 
-Native host-browser annotations are also usable, but the host controls that UI. Stable node IDs are exposed on DOM elements. A normal browser page cannot assume access to the host chat input or native attachment format. This plugin does not claim automatic insertion of a native chat attachment.
+The composer checks the host's text-message capability, calls ui/message on explicit user submission, and waits for acknowledgment. The current conversation is the standard target; it never starts a new chat or local agent.
 
-The plugin starts a local MCP process and can launch its preview service. It is intended for locally executed desktop chats; web/mobile and the public OpenAI plugin directory are not implied by GitHub availability. Public directory submission is a separate process.
+start_preview creates a plain localhost browser page. That page has no host message bridge and its Send button is disabled. Selection remains available to get_selection for a connected MCP client.
+
+Installing the plugin and opening a localhost URL are not proof that a host has loaded the MCP App panel. Host UI acceptance must be checked separately.
