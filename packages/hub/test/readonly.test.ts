@@ -27,4 +27,3 @@ it('rejects every content mutation, including the removed editor routes, without
   expect(spoofedHostStatus).toBe(403)
   expect((await fetch(base+'/api/boards',{headers:{'sec-fetch-site':'cross-site'}})).status).toBe(403)
 })
-

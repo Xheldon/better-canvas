@@ -30,4 +30,3 @@ it('opens a long vertical flow at its top central cards instead of an outlying l
   expect(view.y).toBe(64)
   expect(view.scale).toBeGreaterThan(.6)
 })
-

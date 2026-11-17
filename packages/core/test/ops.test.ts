@@ -25,4 +25,3 @@ describe('AI operations', () => {
     expect(() => applyOps(board,[{op:'add_edge',edge:{id:'new',fromNode:'a',toNode:'missing'}}])).toThrow('endpoint')
   })
 })
-

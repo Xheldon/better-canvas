@@ -51,4 +51,3 @@ it('completes the real MCP Apps SDK handshake, resolves a reference, and waits f
     await rm(root,{recursive:true,force:true})
   }
 })
-

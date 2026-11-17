@@ -54,4 +54,3 @@ it('does not pretend a regular browser is connected',()=>{
   expect(reference).not.toHaveBeenCalled()
   expect(screen.getByRole('status').textContent).toContain('not connected')
 })
-
