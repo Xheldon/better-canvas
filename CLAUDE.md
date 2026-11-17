@@ -1,24 +1,25 @@
-# CLAUDE.md — canvai
+# Better Canvas contributor notes
 
-Repo-native visual discussion boards for humans + AI agents. JSON Canvas files as source of truth, thin local server (watcher/WebSocket/MCP/ELK layout), React Flow web client, Obsidian as optional client.
+Better Canvas extends canvai as a local Obsidian Canvas editor and desktop ChatGPT/Codex plugin. Keep upstream attribution and MIT licensing. Public docs, comments and examples use English and generic content only. Never commit user vaults, credentials, local test output or unrelated private projects.
 
-## Ground rules
+## Architecture
 
-- **This is a PUBLIC open-source repo.** Internal discussion notes, meeting transcripts, experiments, and scratch tests never go here — they live in `../canvai-internal/` (outside this repo). When in doubt, put it there.
-- Public docs and code comments are **English**. `README.zh-TW.md` is the one translated file; keep it in sync on substantive README changes.
-- `docs/design.md` is the source of truth for design decisions (numbered D1–D5). Don't contradict it silently — change it (and say why) or open an issue.
+- `packages/canvas-kit`: JSON Canvas parsing, semantic operations and optional layout.
+- `packages/hub`: revision-checked file storage, HTTP/WebSocket preview and MCP tools.
+- `packages/web`: React Flow editor and selection references.
+- `plugin.json`, `mcp.json`, `skills/`: desktop plugin packaging.
 
-## Non-negotiable invariants (from the design doc)
+## Invariants
 
-1. `.canvas` round-trips preserve unknown fields (Advanced Canvas compatibility) and mirror each file's serialization dialect to keep git diffs minimal. Test-enforced: `packages/canvas-kit/test/io.test.ts` (byte-identical round-trips) and the hub e2e.
-2. Agents never compute absolute coordinates — agent-reachable write paths go through semantic ops + ELK auto-layout; human-dragged nodes are `pinned` and auto-layout routes around them.
-3. Mermaid is I/O only (embed in cards, one-way import/explode) — never the persistence format. Rationale: design doc D2.
-4. Concurrency stays turn-based (atomic writes, last-write-wins, event feed) until Phase 2; no CRDT before then.
+1. Preserve unknown JSON fields, existing IDs, coordinates, dimensions and file formatting. Opening a board never runs automatic layout.
+2. Require a fresh revision for card and note edits. Reject stale writes and preserve recoverable drafts/history. Obsidian does not share our file lock; do not claim cross-application atomic transactions.
+3. Keep conversation in the host chat. Do not reintroduce a separate chat sidebar or automatically spawn another AI.
+4. Native browser annotations are host-controlled. Expose stable DOM IDs and MCP references, without claiming direct insertion into the host chat input.
+5. The user explicitly chooses a vault. Keep file operations inside it and exclude `.local`, vault metadata and private data from release packages.
+6. Only rearrange a board when requested. Keep previews structurally compatible, without promising theme- or plugin-identical rendering.
 
-## Status & layout
+`docs/compatibility.md` describes the current contract. Other upstream architecture/deployment notes are historical background, not the fork's current requirements.
 
-- Current phase: **Phase 0 + Phase 1 core shipped** — `packages/canvas-kit` (round-trip io, projection, ops, diff, pinned-aware ELK layout), `packages/hub` (MCP stdio server + `serve` mode: watcher/WebSocket/REST), `packages/web` (React Flow client; Vite build, needs DOM lib so it has its own tsconfig and is excluded from the root one). The two hub processes coordinate purely through files (`.canvas`, `.canvai/state.json`, `.canvai/events.jsonl`). Next: field-test the live loop, measure the token bill of a real discussion turn, then Phase 2 (Yjs, presence, mermaid explode, @agent pins).
-- No build step for hub/kit: Node ≥ 23.6 runs the TypeScript directly (erasable syntax only — no enums/namespaces; relative imports use `.ts` extensions). Web builds with `npm run web:build`. `npm test` (vitest, includes MCP + serve e2e) and `npm run typecheck` must stay green.
-- Dev commands: `npm run serve` (HTTP/WS on 5199), `npm run web:dev` (Vite dev server proxying to 5199), `npm run hub` (MCP stdio).
-- Dogfooding: `.mcp.json` registers the hub for this repo; `discuss/roadmap.canvas` is a live board — feel free to update it via apply_ops when the roadmap changes.
-- License MIT. Do not vendor code from GPL projects (notably obsidian-advanced-canvas); format compatibility only.
+## Verification
+
+Node.js >=22.18. Run `npm run typecheck`, `npm test`, `npm run build`, `npm run plugin:pack`, and `npm run test:package` before release. Use a copy of `examples/vault` for manual checks. Do not install or reconfigure a user's MCP clients merely to work around a test harness failure.

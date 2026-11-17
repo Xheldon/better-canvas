@@ -31,3 +31,14 @@ assets/
 
 # pairsketch hub local state
 .pairsketch/
+
+# Local evaluation and vault state
+.local/
+.canvai/
+.better-canvas/
+.obsidian/
+*.zip
+
+# Public, generic linked-note fixture.
+!examples/vault/Notes/
+!examples/vault/Notes/Research.md

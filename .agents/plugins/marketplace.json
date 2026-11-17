@@ -1,0 +1,20 @@
+{
+  "name": "better-canvas-local",
+  "interface": {
+    "displayName": "Better Canvas"
+  },
+  "plugins": [
+    {
+      "name": "better-canvas",
+      "source": {
+        "source": "local",
+        "path": "./dist/better-canvas"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

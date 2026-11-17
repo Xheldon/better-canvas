@@ -1,0 +1,93 @@
+{
+  "nodes": [
+    {
+      "id": "discovery",
+      "type": "group",
+      "x": 0,
+      "y": 0,
+      "width": 1000,
+      "height": 650,
+      "label": "Product discovery",
+      "color": "6"
+    },
+    {
+      "id": "research",
+      "type": "group",
+      "x": 30,
+      "y": 65,
+      "width": 430,
+      "height": 540,
+      "label": "01 \u00b7 Understand",
+      "color": "5"
+    },
+    {
+      "id": "brief",
+      "type": "text",
+      "x": 60,
+      "y": 115,
+      "width": 370,
+      "height": 160,
+      "text": "# A clearer way to think\n\nKeep the big picture in view. Connect your notes, explore alternatives, and refine one idea at a time."
+    },
+    {
+      "id": "findings",
+      "type": "file",
+      "x": 60,
+      "y": 320,
+      "width": 370,
+      "height": 245,
+      "file": "Notes/Research.md",
+      "subpath": "#Findings"
+    },
+    {
+      "id": "proposal",
+      "type": "text",
+      "x": 550,
+      "y": 115,
+      "width": 390,
+      "height": 180,
+      "color": "6",
+      "text": "# Make space for the idea\n\nA shared canvas should preserve your layout and keep the conversation where it belongs.\n\n**Try:** select this card, then right-click."
+    },
+    {
+      "id": "review",
+      "type": "text",
+      "x": 550,
+      "y": 390,
+      "width": 390,
+      "height": 175,
+      "text": "# What would you change?\n\n- Select a card, or Shift-select several.\n- Ask AI about the selection.\n- Add your request in the existing chat.\n\nYour files stay in your vault."
+    }
+  ],
+  "edges": [
+    {
+      "id": "brief-proposal",
+      "fromNode": "brief",
+      "fromSide": "right",
+      "toNode": "proposal",
+      "toSide": "left",
+      "label": "explore",
+      "color": "6"
+    },
+    {
+      "id": "proposal-review",
+      "fromNode": "proposal",
+      "fromSide": "bottom",
+      "toNode": "review",
+      "toSide": "top",
+      "label": "refine"
+    },
+    {
+      "id": "findings-review",
+      "fromNode": "findings",
+      "fromSide": "right",
+      "toNode": "review",
+      "toSide": "left",
+      "label": "evidence",
+      "toEnd": "none"
+    }
+  ],
+  "exampleMetadata": {
+    "purpose": "Generic interoperability fixture"
+  }
+}

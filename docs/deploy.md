@@ -1,3 +1,5 @@
+> Historical canvai documentation. For Better Canvas, follow the [README](../README.md) and [current compatibility contract](compatibility.md).
+
 # Deploying canvai on another machine (incl. no VPN)
 
 This is the path for putting canvai on a repo that lives on a **different machine** —

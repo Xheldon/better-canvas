@@ -1,305 +1,71 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, connectHub, type BoardInfo } from './api'
 import { BoardTree } from './BoardTree'
 import { CanvasBoard } from './board/CanvasBoard'
-import { ChatPanel } from './ChatPanel'
 import { Settings } from './Settings'
-import { useT } from './i18n'
-import { COARSE_QUERY, PHONE_QUERY, useMediaQuery } from './useMediaQuery'
 
 export function App() {
-  const t = useT()
   const [boards, setBoards] = useState<BoardInfo[]>([])
-  const [active, setActive] = useState<string | null>(null)
-  const [rootName, setRootName] = useState('')
-  // survive reloads (mobile browsers discard background tabs freely) — don't
-  // dump the user back on the active board after every resume
-  const [current, setCurrent] = useState<string | null>(() => sessionStorage.getItem('ps-current'))
-
-  useEffect(() => {
-    if (current) sessionStorage.setItem('ps-current', current)
-  }, [current])
+  const [current, setCurrent] = useState<string | null>(null)
+  const [root, setRoot] = useState('')
+  const [filter, setFilter] = useState('')
+  const [sideOpen, setSideOpen] = useState(true)
+  const [connected, setConnected] = useState(false)
+  const [error, setError] = useState('')
   const [changeSignal, setChangeSignal] = useState(0)
-  const [chatSignal, setChatSignal] = useState(0)
-  const [agentBusy, setAgentBusy] = useState(false)
-  const [offline, setOffline] = useState(false)
-  const [wsUp, setWsUp] = useState(false)
-  const phone = useMediaQuery(PHONE_QUERY)
-  // pointer type drives sidebar row gestures (swipe vs hover) — iPad is a wide
-  // viewport but coarse, so it must get the touch path, not the mouse path
-  const coarse = useMediaQuery(COARSE_QUERY)
-  // on phones the sidebar and chat are overlays; the canvas owns the screen
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [chatOpen, setChatOpen] = useState(false)
-  const [chatUnread, setChatUnread] = useState(false)
-  // desktop: both panels collapse (edge tabs) and drag-resize (edge handles),
-  // like the phone overlays but persistent — the canvas is the main act
-  const [sideOpen, setSideOpen] = useState(() => localStorage.getItem('ps-side-open') !== '0')
-  const [deskChatOpen, setDeskChatOpen] = useState(() => localStorage.getItem('ps-chat-open') !== '0')
-  const [sideW, setSideW] = useState(() => Number(localStorage.getItem('ps-side-w')) || 280)
-  const [chatW, setChatW] = useState(() => Number(localStorage.getItem('ps-chat-w')) || 340)
-  useEffect(() => localStorage.setItem('ps-side-open', sideOpen ? '1' : '0'), [sideOpen])
-  useEffect(() => localStorage.setItem('ps-chat-open', deskChatOpen ? '1' : '0'), [deskChatOpen])
-  // persist widths from effects, not the pointerup handler — the handler's
-  // closure can hold the previous render's value
-  useEffect(() => localStorage.setItem('ps-side-w', String(sideW)), [sideW])
-  useEffect(() => localStorage.setItem('ps-chat-w', String(chatW)), [chatW])
-  const panelDrag = useRef<{ which: 'side' | 'chat'; startX: number; startW: number } | null>(null)
-  const startPanelDrag = (which: 'side' | 'chat') => (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.currentTarget.setPointerCapture(event.pointerId)
-    panelDrag.current = { which, startX: event.clientX, startW: which === 'side' ? sideW : chatW }
-  }
-  const onPanelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const d = panelDrag.current
-    if (!d) return
-    const delta = event.clientX - d.startX
-    if (d.which === 'side') setSideW(Math.min(480, Math.max(180, d.startW + delta)))
-    else setChatW(Math.min(560, Math.max(240, d.startW - delta)))
-  }
-  const endPanelDrag = () => {
-    panelDrag.current = null
-  }
-  const currentRef = useRef<string | null>(null)
+  const [help, setHelp] = useState(false)
+  const currentRef = useRef(current)
   currentRef.current = current
-  const activeRef = useRef<string | null>(null)
-  activeRef.current = active
-  const chatOpenRef = useRef(false)
-  chatOpenRef.current = phone ? chatOpen : deskChatOpen
-
-  const refreshBoards = useCallback(async () => {
+  const refresh = useCallback(async () => {
     try {
-      const result = await api.boards()
-      setBoards(result.boards)
-      setActive(result.active)
-      setRootName(result.root ?? '')
-      setOffline(false)
-      setCurrent((existing) =>
-        existing && result.boards.some((b) => b.path === existing)
-          ? existing
-          : (result.active ?? result.boards[0]?.path ?? null),
-      )
-    } catch {
-      setOffline(true)
-    }
+      const r = await api.boards()
+      setBoards(r.boards); setRoot(r.root ?? 'Vault')
+      setCurrent(old => r.boards.some(b => b.path === old) ? old : r.active && r.boards.some(b => b.path === r.active) ? r.active : r.boards[0]?.path ?? null)
+      setError('')
+    } catch (e) { setError(String(e)) }
   }, [])
-
-  // returning from background (mobile browsers freeze tabs): the socket may
-  // be dead for seconds and everything on screen is stale — refetch eagerly
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      void refreshBoards()
-      setChangeSignal((n) => n + 1)
-      setChatSignal((n) => n + 1)
-    }
+    void refresh()
+    const close = connectHub(message => {
+      if (message.type === 'boards_changed' || message.type === 'hello') void refresh()
+      if (message.type === 'hello' || (message.type === 'board_changed' && message.board === currentRef.current)) setChangeSignal(n => n + 1)
+      if (message.type === 'file_changed') window.dispatchEvent(new CustomEvent('better-canvas:file-changed', { detail: message.path }))
+      if (message.type === 'sync_error') setError(message.error)
+      if (message.type === 'active_changed' && message.active) setCurrent(message.active)
+    }, setConnected)
+    const onVisible = () => { if (document.visibilityState === 'visible') { void refresh(); setChangeSignal(n => n + 1) } }
     document.addEventListener('visibilitychange', onVisible)
-    return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [refreshBoards])
-
-  useEffect(() => {
-    void refreshBoards()
-    return connectHub((message) => {
-      if (message.type === 'boards_changed') void refreshBoards()
-      if (message.type === 'board_changed' && message.board === currentRef.current) {
-        setChangeSignal((n) => n + 1)
-      }
-      if (message.type === 'hello' || message.type === 'active_changed') {
-        const previous = activeRef.current
-        setActive(message.active)
-        // follow the shared focus when it actually CHANGES — a (re)connect
-        // hello or a re-broadcast of the same value must not yank the user
-        // off a board they navigated to themselves
-        if (message.type === 'active_changed' && message.active && message.active !== previous) {
-          setCurrent(message.active)
-        }
-        if (message.type === 'hello') {
-          setCurrent((existing) => existing ?? message.active)
-          // resync: handoff done/error broadcasts missed while disconnected
-          // would otherwise leave the busy indicator stuck on
-          setAgentBusy(!!message.busy)
-        }
-      }
-      if (message.type === 'chat_changed') {
-        setChatSignal((n) => n + 1)
-        if (!chatOpenRef.current) setChatUnread(true)
-      }
-      if (message.type === 'handoff') setAgentBusy(message.status === 'started')
-    }, setWsUp)
-  }, [refreshBoards])
-
-  const newBoard = async (folder?: string) => {
-    const path = window.prompt('New board path (repo-relative):', `${folder ?? 'discuss'}/topic.canvas`)
-    if (!path) return
-    try {
-      await api.createBoard(path)
-      await api.setActive(path)
-      await refreshBoards()
-      setCurrent(path)
-      setDrawerOpen(false)
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
-    }
+    return () => { close(); document.removeEventListener('visibilitychange', onVisible) }
+  }, [refresh])
+  const create = async (folder = '') => {
+    const name = window.prompt('Canvas path inside this vault', (folder ? folder + '/' : '') + 'Untitled.canvas')
+    if (!name) return
+    try { await api.createBoard(name); await refresh(); setCurrent(name) } catch (e) { setError(String(e)) }
   }
-
-  const deleteBoard = async (boardPath: string) => {
-    if (!window.confirm(t('board.deleteConfirm').replace('{name}', boardPath))) return
-    try {
-      await api.deleteBoard(boardPath)
-      await refreshBoards()
-      setCurrent((existing) => (existing === boardPath ? null : existing))
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
-    }
+  const remove = async (path: string) => {
+    if (!window.confirm('Remove ' + path + '? A recovery copy is kept in .better-canvas/history.')) return
+    try { await api.deleteBoard(path); await refresh() } catch (e) { setError(String(e)) }
   }
-
-  const renameBoard = async (from: string, to: string) => {
-    try {
-      await api.renameBoard(from, to)
-      await refreshBoards()
-      setCurrent((existing) => (existing === from ? to : existing))
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
-    }
+  const rename = async (from: string, to: string) => {
+    try { await api.renameBoard(from, to); setCurrent(c => c === from ? to : c); await refresh() } catch (e) { setError(String(e)) }
   }
-
-  const openChat = () => {
-    setChatOpen(true)
-    setChatUnread(false)
-    setDrawerOpen(false)
-  }
-
-  return (
-    <div
-      className={`ps-app${phone ? ' is-mobile' : ''}${!phone && !sideOpen ? ' side-closed' : ''}${!phone && !deskChatOpen ? ' chat-closed' : ''}`}
-      style={
-        phone
-          ? undefined
-          : {
-              // minmax lets wide persisted panels give way on narrow windows —
-              // the canvas keeps at least 320px instead of collapsing to 0
-              gridTemplateColumns: `minmax(0, ${sideOpen ? sideW : 0}px) minmax(320px, 1fr) minmax(0, ${deskChatOpen ? chatW : 0}px)`,
-            }
-      }
-    >
-      {phone && (
-        <header className="ps-topbar">
-          <button className="ps-iconbtn" onClick={() => setDrawerOpen(true)} aria-label="boards">
-            ☰
-          </button>
-          <div className="ps-topbar-title">
-            <i
-              className={`ps-live${wsUp ? ' is-up' : ''}`}
-              title={wsUp ? t('live.connected') : t('live.reconnecting')}
-              aria-label={wsUp ? 'connected' : 'reconnecting'}
-            />
-            {current ? current.replace(/\.canvas$/, '') : 'canvai'}
-          </div>
-          {agentBusy && <span className="ps-topbar-busy">🤖</span>}
-          <Settings />
-          <button className="ps-iconbtn" onClick={openChat} aria-label={t('chat.title')}>
-            💬{chatUnread && <i className="ps-dot" />}
-          </button>
-        </header>
-      )}
-      {phone && (drawerOpen || chatOpen) && (
-        <div
-          className="ps-backdrop"
-          onClick={() => {
-            setDrawerOpen(false)
-            setChatOpen(false)
-          }}
-        />
-      )}
-      <aside className={`ps-sidebar${drawerOpen ? ' is-open' : ''}`}>
-        <header className="ps-brand">
-          <div className="ps-brand-text">
-            <span className="ps-logo">canvai</span>
-            <span className="ps-tagline">{t('sidebar.tagline')}</span>
-          </div>
-          {!phone && <Settings />}
-        </header>
-        <div className="ps-boards">
-          {rootName && boards.length > 0 && (
-            <div className="ps-repoline" title={t('sidebar.repoTitle')}>
-              <span className="ps-repoline-icon">▣</span> {rootName}
-            </div>
-          )}
-          <BoardTree
-            boards={boards}
-            active={active}
-            current={current}
-            coarse={coarse}
-            onOpen={(path) => {
-              setCurrent(path)
-              setDrawerOpen(false)
-            }}
-            onNewBoard={(folder) => void newBoard(folder)}
-            onDelete={(path) => void deleteBoard(path)}
-            onRename={(from, to) => void renameBoard(from, to)}
-          />
-          {boards.length === 0 && !offline && <div className="ps-empty">{t('board.none')}</div>}
-          {offline && <div className="ps-empty">{t('board.unreachable')}</div>}
-        </div>
-        <button className="ps-newboard" onClick={() => void newBoard()}>
-          {t('board.new')}
-        </button>
-      </aside>
-      <main className="ps-main">
-        {current ? (
-          <CanvasBoard key={current} path={current} changeSignal={changeSignal} />
-        ) : (
-          <div className="ps-placeholder">{t('board.placeholder')}</div>
-        )}
-        {!phone && (
-          <>
-            <button
-              className="ps-paneltab ps-paneltab-left"
-              onClick={() => setSideOpen((v) => !v)}
-              title={sideOpen ? t('panel.collapse') : t('panel.boards')}
-              aria-label="toggle board list"
-            >
-              {sideOpen ? '‹' : '›'}
-            </button>
-            <button
-              className="ps-paneltab ps-paneltab-right"
-              onClick={() => {
-                setDeskChatOpen((v) => !v)
-                setChatUnread(false)
-              }}
-              title={deskChatOpen ? t('panel.collapse') : t('chat.title')}
-              aria-label="toggle chat"
-            >
-              {deskChatOpen ? '›' : '‹'}
-              {!deskChatOpen && chatUnread && <i className="ps-dot" />}
-            </button>
-            {sideOpen && (
-              <div
-                className="ps-panelresize ps-panelresize-left"
-                onPointerDown={startPanelDrag('side')}
-                onPointerMove={onPanelDrag}
-                onPointerUp={endPanelDrag}
-                onPointerCancel={endPanelDrag}
-              />
-            )}
-            {deskChatOpen && (
-              <div
-                className="ps-panelresize ps-panelresize-right"
-                onPointerDown={startPanelDrag('chat')}
-                onPointerMove={onPanelDrag}
-                onPointerUp={endPanelDrag}
-                onPointerCancel={endPanelDrag}
-              />
-            )}
-          </>
-        )}
-      </main>
-      <ChatPanel
-        signal={chatSignal}
-        agentBusy={agentBusy}
-        wsUp={wsUp}
-        open={chatOpen}
-        onClose={phone ? () => setChatOpen(false) : undefined}
-      />
-    </div>
-  )
+  return <div className={'bc-app' + (sideOpen ? '' : ' sidebar-hidden')}>
+    <aside className="bc-sidebar" aria-label="Canvas files">
+      <header className="bc-brand"><span className="bc-mark" aria-hidden="true">▧</span><div><strong>Better Canvas</strong><span>Your canvas, connected.</span></div><Settings /></header>
+      <div className="bc-vault"><span>VAULT</span><strong title={root}>{root}</strong></div>
+      <label className="bc-search"><span aria-hidden="true">⌕</span><input type="search" aria-label="Find a canvas" placeholder="Find a canvas…" value={filter} onChange={e => setFilter(e.target.value)} /></label>
+      <nav className="bc-file-list" aria-label="Boards">
+        <BoardTree boards={boards.filter(b => b.path.toLowerCase().includes(filter.toLowerCase()))} active={null} current={current} coarse={false} onOpen={setCurrent} onNewBoard={f => void create(f)} onDelete={p => void remove(p)} onRename={(a,b) => void rename(a,b)} />
+        {!boards.length && <p className="bc-empty">No canvases yet. Create one to begin.</p>}
+      </nav>
+      <button className="bc-new" onClick={() => void create()}>＋ New canvas</button>
+      <footer className="bc-sidebar-foot"><span className={'bc-status' + (connected ? ' connected' : '')} />{connected ? 'Watching local files' : 'Reconnecting…'}<button onClick={() => setHelp(true)} aria-label="How to work with AI">?</button></footer>
+    </aside>
+    <main className="bc-workspace">
+      <header className="bc-topbar"><button className="bc-icon" onClick={() => setSideOpen(s => !s)} aria-label="Toggle file list">☰</button><div className="bc-breadcrumb" title={current ?? ''}><span>{root}</span><span>/</span><strong>{current?.replace(/\.canvas$/, '') ?? 'No canvas selected'}</strong></div><button className="bc-help" onClick={() => setHelp(true)}>Working with AI ↗</button></header>
+      {error && <div className="bc-error" role="alert">{error}<button onClick={() => { setError(''); void refresh() }}>Retry</button></div>}
+      <div className="bc-stage">{current ? <CanvasBoard key={current} path={current} changeSignal={changeSignal} /> : <div className="bc-welcome"><span className="bc-mark">▧</span><h1>A little room to think.</h1><p>Open a canvas from your vault, or create one.</p><button onClick={() => void create()}>Create a canvas</button></div>}</div>
+    </main>
+    {help && <div className="bc-dialog-backdrop" onClick={() => setHelp(false)}><section className="bc-dialog" role="dialog" aria-modal="true" aria-label="Working with AI" onClick={e => e.stopPropagation()}><button className="bc-dialog-close" onClick={() => setHelp(false)} aria-label="Close help">×</button><h2>Keep the conversation in your chat.</h2><ol><li>Select a card. Hold Shift and drag to select several.</li><li>Right-click → <strong>Ask AI about selection</strong>, then copy the reference into your chat with your request.</li><li>The connected AI reads the reference and edits the original canvas through MCP.</li></ol><p>You can also use your host browser’s annotation tool. Selected cards are available through <code>get_selection</code>.</p><p className="bc-muted">Opening this page does not connect an AI client automatically. Install the Better Canvas plugin or configure its MCP server first.</p></section></div>}
+  </div>
 }

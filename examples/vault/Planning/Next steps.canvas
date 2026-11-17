@@ -1,0 +1,14 @@
+{
+  "nodes": [
+    {
+      "id": "next",
+      "type": "text",
+      "x": -200,
+      "y": -100,
+      "width": 380,
+      "height": 180,
+      "text": "# Next steps\n\nCapture another idea here."
+    }
+  ],
+  "edges": []
+}

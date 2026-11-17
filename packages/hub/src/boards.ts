@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import process from 'node:process'
+import { revisionOf, vaultPath, writeVersioned } from './storage.ts'
 import {
   parseCanvas,
   serializeCanvas,
@@ -27,7 +27,7 @@ export async function listBoards(root: string): Promise<BoardInfo[]> {
   const infos: BoardInfo[] = []
   for (const rel of found.sort()) {
     try {
-      const abs = path.join(root, rel)
+      const abs = await vaultPath(root, rel)
       const [text, s] = await Promise.all([readFile(abs, 'utf8'), stat(abs)])
       const { data } = parseCanvas(text)
       infos.push({ path: rel, nodes: nodes(data).length, edges: edges(data).length, mtimeMs: s.mtimeMs })
@@ -62,27 +62,32 @@ export function boardAbsPath(root: string, rel: string): string {
 export interface LoadedBoard {
   data: CanvasData
   style: CanvasStyle
+  revision: string
 }
 
 export async function readBoard(root: string, rel: string): Promise<LoadedBoard> {
-  const text = await readFile(boardAbsPath(root, rel), 'utf8')
-  return parseCanvas(text)
+  boardAbsPath(root, rel)
+  const text = await readFile(await vaultPath(root, rel), 'utf8')
+  if (!text.trim()) throw new Error('Canvas file is empty or still being written.')
+  const parsed = parseCanvas(text)
+  if (!parsed.data || typeof parsed.data !== 'object' || (parsed.data.nodes !== undefined && !Array.isArray(parsed.data.nodes)) || (parsed.data.edges !== undefined && !Array.isArray(parsed.data.edges))) throw new Error('Invalid Canvas file.')
+  return { ...parsed, revision: revisionOf(text) }
 }
 
 export async function readBoardRaw(root: string, rel: string): Promise<string> {
-  return readFile(boardAbsPath(root, rel), 'utf8')
+  boardAbsPath(root, rel)
+  return readFile(await vaultPath(root, rel), 'utf8')
 }
 
 /** Atomic write (temp file + rename) so Obsidian never sees a torn board. */
-export async function writeBoard(root: string, rel: string, data: CanvasData, style: CanvasStyle): Promise<void> {
-  const abs = boardAbsPath(root, rel)
-  const tmp = path.join(path.dirname(abs), `.${path.basename(abs)}.${process.pid}.tmp`)
-  await writeFile(tmp, serializeCanvas(data, style), 'utf8')
-  await rename(tmp, abs)
+export async function writeBoard(root: string, rel: string, data: CanvasData, style: CanvasStyle, expectedRevision?: string): Promise<string> {
+  boardAbsPath(root, rel)
+  return writeVersioned(root, rel, serializeCanvas(data, style), expectedRevision)
 }
 
 export async function createBoard(root: string, rel: string): Promise<void> {
-  const abs = boardAbsPath(root, rel)
+  boardAbsPath(root, rel)
+  const abs = await vaultPath(root, rel)
   try {
     await stat(abs)
     throw new Error(`board already exists: "${rel}"`)
@@ -94,15 +99,22 @@ export async function createBoard(root: string, rel: string): Promise<void> {
 }
 
 export async function deleteBoard(root: string, rel: string): Promise<void> {
-  const abs = boardAbsPath(root, rel)
+  boardAbsPath(root, rel)
+  const abs = await vaultPath(root, rel)
+  const previous = await readFile(abs, 'utf8')
+  const history = path.join(root, '.better-canvas', 'history', revisionOf(rel))
+  await mkdir(history, { recursive: true })
+  await writeFile(path.join(history, `${revisionOf(previous)}.json`), JSON.stringify({ path: rel, savedAt: new Date().toISOString(), text: previous }))
   await rm(abs)
   await pruneEmptyDirs(root, path.dirname(abs))
 }
 
 /** Rename or move a board (both are just a path change). Fails if the target exists. */
 export async function renameBoard(root: string, from: string, to: string): Promise<void> {
-  const fromAbs = boardAbsPath(root, from)
-  const toAbs = boardAbsPath(root, to)
+  boardAbsPath(root, from)
+  boardAbsPath(root, to)
+  const fromAbs = await vaultPath(root, from)
+  const toAbs = await vaultPath(root, to)
   if (fromAbs === toAbs) return
   try {
     await stat(toAbs)

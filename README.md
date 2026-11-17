@@ -1,146 +1,95 @@
-<div align="center">
+# Better Canvas
 
-<img src="docs/images/canvai-icon.svg" alt="canvai" width="84">
+An MCP-enabled Obsidian Canvas editor and desktop ChatGPT/Codex plugin, based on [canvai](https://github.com/chuck00lin/canvai).
 
-# canvai
+Open a local vault in the browser, reference selected cards in your existing conversation, and let an AI edit the original `.canvas` files. No additional chat sidebar or Obsidian plugin is required.
 
-<img src="docs/images/canvai-demo.gif" alt="canvai — an agent sketches a planning board live while you watch" width="820">
+![Better Canvas with two selected cards and the AI context menu](docs/images/better-canvas.jpg)
 
-**The whiteboard built for you and your agent.** Describe what you're thinking — your coding agent sketches it on a shared canvas of cards, connections, and diagrams, and reshapes it with you, live.
+## Quick start
 
-[![GitHub stars](https://img.shields.io/github/stars/chuck00lin/canvai?style=for-the-badge)](https://github.com/chuck00lin/canvai/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/chuck00lin/canvai?style=for-the-badge)](https://github.com/chuck00lin/canvai/network/members)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
+Requires Node.js 22.18 or later and npm.
 
-繁體中文說明請見 **[README.zh-TW.md](README.zh-TW.md)**
-
-</div>
-
-Boards are plain [JSON Canvas](https://jsoncanvas.org) files in your repo, versioned by git. Drop canvai into any project, point [Claude Code](https://claude.com/claude-code) (or any MCP client) at it, and discuss in the browser instead of the terminal — no design tool, no account, no Obsidian required.
-
-```bash
-cd /path/to/your/project
-npx @chuck00lin/canvai init      # wire canvai in — .mcp.json + Claude Code pre-approval
-npx @chuck00lin/canvai serve     # → http://127.0.0.1:5199
+```sh
+git clone https://github.com/Xheldon/better-canvas.git
+cd better-canvas
+npm ci
+npm run build
+node packages/hub/dist/better-canvas.mjs serve --root /absolute/path/to/vault
 ```
 
-That's it — no clone, no build step. Requires **Node 18+**. Running it a lot? `npm i -g @chuck00lin/canvai` and use `canvai` directly.
+Open the local address printed by the command. To try the generic sample safely, copy `examples/vault` to a separate folder and point `--root` at that copy.
 
-> **What works today:** the whole human↔agent loop runs now — add canvai to any repo, open the board in your browser, and Claude Code edits it live while you drag cards back at it (MCP hub + canvas library + React Flow client, watcher → WebSocket). The board *protocol* is still soft — we're collecting real-world use cases before freezing it. **Wished you could whiteboard architecture with an agent instead of scrolling a terminal? [Tell us how you'd use it](.github/ISSUE_TEMPLATE/use-case.yml)** — early use cases shape this project the most.
+## ChatGPT / Codex plugin
 
-## Why canvai
-
-Terminals are a narrow pipe for visual thinkers — and today they're the only pipe we share with our agents. canvai gives you and an AI partner one shared, infinite canvas: you think spatially by dragging and grouping, the agent reads the *whole board* and reshapes it with you. Like Miro or FigJam, except the participants include AI agents — and the file is just JSON Canvas in your repo, so your thinking stays yours.
-
-## Highlights
-
-### 🧑‍🤝‍🤖 One canvas, both of you on it
-Drop ideas as cards, connect them, sketch the shape of a problem. The agent reads the entire board, replies in place, and reshapes it with you — a real shared surface, not a chat log with a picture attached.
-
-### 🧠 The agent speaks structure, never pixels
-Agents send semantic operations over MCP (`add_node`, `connect`, `insert_mermaid`, …) and read a coordinate-free structural projection. An [ELK](https://eclipse.dev/elk/) layout engine turns structure into positions, so the agent focuses on meaning while the canvas handles space.
-
-### 📄 Your boards are just files in your repo
-Every board is a [JSON Canvas](https://jsoncanvas.org) file under `discuss/`, git-versioned and the single source of truth. Nothing is locked in a cloud — clone the repo and your thinking comes with it.
-
-### 📌 Human intent wins
-Any card you drag is **pinned**: `auto_layout` flows around it, and the agent picks up your arrangement on its next read. You arrange; the agent adapts.
-
-### 🧜 Mermaid in, canvas out
-Agents can emit Mermaid; the hub explodes it into real canvas nodes (parse → layout → nodes). Dense structural diagrams (sequence, state) render *inside* cards as fenced blocks. Mermaid is an I/O language, not a storage format.
-
-### 🪟 Obsidian optional
-The web client is the whole UI — nothing else to install. But because boards are JSON Canvas files, if you already use [Obsidian](https://obsidian.md) you can open the repo as a vault and they render and edit natively.
-
-### 🌐 Run it anywhere — even with no VPN
-Local by default. Add `--host 0.0.0.0 --token` for your LAN/VPN, or a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) tunnel for a public HTTPS URL with no port-forward. Opt-in `--report-url` telemetry reports crashes/errors from a remote install while it's still early. See **[docs/deploy.md](docs/deploy.md)**.
-
-## Get started
-
-**Wire it in** — from the repo you want boards in:
-
-```bash
-cd /path/to/your/project
-npx @chuck00lin/canvai init
+```sh
+npm run plugin:pack
 ```
 
-This writes a `canvai` MCP server into `.mcp.json` and pre-approves it for Claude Code. *(Want it from source, or contributing? `git clone` + `node scripts/setup.mjs --repo .` does the same — see [docs/deploy.md](docs/deploy.md).)*
+This produces `dist/better-canvas-0.2.0.zip`, including the MCP server, browser assets, manifests and skill. The source repo includes a local marketplace at `.agents/plugins/marketplace.json`; build and package before installing from it. Only the allowlisted package folder is installed, not the source checkout or local test files. The packaged plugin requires Node.js on the user's computer but does not require `node_modules` or an AI API key.
 
-**Open the canvas**:
+For Codex CLI, install the built local package with:
 
-```bash
-npx @chuck00lin/canvai serve --root . --autocommit   # → http://127.0.0.1:5199
+```sh
+codex plugin marketplace add .
+codex plugin add better-canvas@better-canvas-local
 ```
 
-**Think together** — ask Claude Code *"create a board `discuss/architecture.canvas`, set it active, and sketch our module structure"*, and cards appear in the browser as it works. Drag one and it's **pinned** — `auto_layout` flows around it and the agent picks up your arrangement on its next read. Double-click to edit markdown (` ```mermaid ` fences render as diagrams), draw edges from the side handles, tick a board **active** to point the agent at it. In the side chat, **Send** asks the agent; **Note** just jots on the board.
+For a prebuilt release, extract the ZIP and run those two commands from the extracted `better-canvas` folder instead; no build or npm install is needed. Both the source checkout and release include a local marketplace. Desktop clients that support local marketplaces can discover it through their Plugins Directory; restart the client if necessary, select the **Better Canvas** source, and install the plugin there. Client availability varies by version and surface.
 
-<div align="center">
-<img src="docs/images/canvai-chat.png" alt="canvai chat — Send asks the agent, Note just jots" width="340">
-</div>
+Then start a new chat and ask Better Canvas to open your vault. The AI calls `open_vault`, `start_preview`, and opens the returned URL in its browser panel. The release has been tested through a real stdio MCP client; installation into the current ChatGPT/Codex chat is not automatic.
 
-## The core idea
+GitHub distribution is separate from OpenAI's public plugin directory. A public directory listing is **not** included. See the official [plugin packaging](https://developers.openai.com/plugins/build/plugins) and [desktop-only plugin](https://developers.openai.com/plugins/deploy/desktop-only) instructions for current installation and submission requirements.
 
-Diagrams have two possible sources of truth, and the split maps exactly onto who is good at what:
+For any other MCP client, configure a stdio server:
 
-|  | Structure-first (e.g. Mermaid) | Position-first (e.g. JSON Canvas) |
-|---|---|---|
-| Truth | nodes & relations, layout derived | coordinates, layout stored |
-| Natural for | **agents** — one line of text per relation | **humans** — dragging, grouping, whitespace as meaning |
-| Weakness | positions have nowhere to live → can't drag | verbose coordinates → token cost, spatial reasoning |
-
-canvai refuses to pick a side:
-
-- **Persistence is position-first** — `discuss/*.canvas` files (JSON Canvas 1.0) in your repo, so human drags always have somewhere to land, and Obsidian opens them for free.
-- **The agent interface is structure-first** — semantic ops over MCP and a coordinate-free projection; ELK turns structure into positions. **Agents never think in pixels.**
-- **Human intent wins** — any node a human dragged is *pinned*; auto-layout routes around it.
-- **Mermaid is an I/O language, not storage** — agents emit Mermaid, the hub explodes it into canvas nodes; dense diagrams render inside cards.
-
-## Architecture
-
-```mermaid
-flowchart TB
-  W["🧑 Web client — React Flow editor<br/>board list · active-board checkbox · md/mermaid cards"]
-  A["🤖 Agent — Claude Code or any MCP client<br/>speaks structure, never pixels"]
-  H["canvai hub — thin local server<br/>file watcher · WebSocket · MCP · ELK auto-layout"]
-  F["repo/discuss/*.canvas<br/>JSON Canvas 1.0 · git-versioned · source of truth"]
-  O["Obsidian (optional client)"]
-
-  W <-->|WebSocket| H
-  A <-->|"MCP: semantic ops + events"| H
-  H <-->|"watch / atomic write"| F
-  O -.->|"opens the same files"| F
+```json
+{
+  "mcpServers": {
+    "better-canvas": {
+      "command": "node",
+      "args": ["/absolute/path/to/better-canvas/packages/hub/dist/better-canvas.mjs", "mcp", "--select-vault"]
+    }
+  }
+}
 ```
 
-Every layer can fail independently: kill the server and humans still open boards in Obsidian; skip Obsidian and the web client works; close every client and agents still read the files. Choosing the persistence format well buys all of that.
+`--select-vault` starts without opening any vault. The `open_vault` tool selects the folder for the current MCP process. Alternatively, pass `mcp --root /absolute/path/to/vault` for a fixed folder.
 
-### MCP surface
+## Point at a card, keep talking in your chat
 
-| Tool | Purpose | Status |
-|---|---|---|
-| `list_boards` / `get_active_board` / `set_active_board` / `create_board` | discover boards; share one focus between human and agent | ✅ |
-| `read_board(mode)` | `structure` (default, coordinate-free) · `full` | ✅ |
-| `apply_ops([...])` | atomic batch of semantic edits: add / update / delete / connect / group / move, with `$ref` chaining | ✅ |
-| rails (in `apply_ops`) | an ordered list with a spatial projection — timelines & fishbones as list ops, never coordinates | ✅ |
-| `auto_layout` | ELK layered pass; pinned nodes stay put, groups move as blocks | ✅ |
-| `events_since(cursor)` | what humans did since last sync: web edits, Obsidian edits, other agents | ✅ |
-| `insert_mermaid(text)` | Mermaid → parse → ELK layout → canvas nodes | planned |
+1. Select a card, or hold Shift and drag to select several.
+2. Right-click → **Ask AI about selection**.
+3. Copy the reference into your chat and describe the change.
+4. The AI calls `read_reference`, reads the current board revision, and edits only the requested nodes.
 
-## What's next
+`get_selection` also exposes the current browser selection. Native browser annotations can identify DOM elements through stable card IDs. The page does not claim access to the host's chat input or its native attachment format.
 
-Here today: the full loop — add canvai to any repo and Claude Code sketches on a board in your browser while you drag cards back at it (MCP hub, canvas library, a thin local server with atomic writes that preserve unknown fields, a React Flow editor with the active-board loop, human drags that pin nodes and surface in `events_since`).
+## What is included
 
-Next: **real-time** — a CRDT document layer (Yjs) for simultaneous human + agent editing, presence (cursors), Mermaid import-explode, an `@agent` pin protocol, and multi-board portals. The board *protocol* stays soft until real use cases settle it.
+- Compact, searchable Canvas file tree and a canvas-focused browser interface.
+- Node references, multi-selection, and MCP tools for cards, connections and linked notes.
+- Saved-file synchronization with Obsidian, including linked Markdown and images.
+- Required revision checks, recoverable browser drafts, and local recovery history.
+- Original coordinates, dimensions, node order, nested groups, connection sides and endpoint arrows.
+- Heading and paragraph-block excerpts for linked Markdown.
+- Preservation of unknown JSON fields and existing file formatting during edits.
 
-**Non-goals:** an interactive Mermaid engine (the language has no position vocabulary — see the [design doc](docs/design.md#decision-2)); a cloud service (local-first, your repo is the backend); real-time CRDT before turn-based collaboration proves itself.
+Rendering follows JSON Canvas geometry. It does **not** reproduce arbitrary Obsidian themes, plugin-generated content, or every Markdown extension. See [compatibility and synchronization](docs/compatibility.md) for the precise boundaries and [privacy](docs/privacy.md) for local data handling.
 
-## Contributing
+## Development
 
-The most valuable contribution right now is a **use case**: who you are, what you'd put on the board, what the agent should do there. [Open a use-case issue](.github/ISSUE_TEMPLATE/use-case.yml) — or challenge the design decisions in [docs/design.md](docs/design.md). See [CONTRIBUTING.md](CONTRIBUTING.md).
+```sh
+npm ci
+npm run typecheck
+npm test
+npm run build
+npm run plugin:pack
+npm run test:package
+```
 
-## Prior art & credits
+See [verification scope](docs/testing.md) for automated and manual acceptance checks.
 
-canvai stands on ideas validated by others: [Kanvas](https://github.com/XMihura/Kanvas) (humans + agents on Obsidian Canvas via semantic CLI ops), [Bragi Canvas](https://community.obsidian.md/plugins/bragi-canvas) (active canvas over local MCP), the Excalidraw MCP ecosystem ([excalidash-mcp](https://github.com/davifernan/excalidash-mcp), [mcp_excalidraw](https://github.com/yctimlin/mcp_excalidraw)) for live agent drawing, the [tldraw Agent Starter Kit](https://tldraw.dev/starter-kits/agent) for agent-on-canvas interaction design, and the [JSON Canvas](https://jsoncanvas.org) open format by Obsidian. The full survey is in the [design doc](docs/design.md#prior-art).
+The upstream canvas engine, MCP operations, React Flow editor, and file watcher are retained and extended. `packages/canvas-kit` contains file-format and layout operations; `packages/hub` contains local services and MCP; `packages/web` contains the editor.
 
-## License
-
-MIT
+MIT. Original canvai license and Git history are retained. See [NOTICE](NOTICE).

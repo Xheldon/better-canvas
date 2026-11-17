@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "better-canvas": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/packages/hub/dist/better-canvas.mjs", "mcp", "--select-vault"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +14,8 @@ import { appendChat, readChatSince } from './chat.ts'
 import { createSummoner } from './summon.ts'
 import { applyMutations, type Mutation } from './mutate.ts'
 import { watchRoot } from './watch.ts'
+import { ConflictError, excerpt, vaultPath } from './storage.ts'
+import { createReference, getSelection, saveSelection, type Selection } from './selection.ts'
 
 /**
  * The serve process: what a human runs (`canvai-hub serve`). Serves the
@@ -33,8 +36,8 @@ export interface ServeOptions {
   /** kill a spawned handoff turn after this long (default 300 000 ms) */
   handoffTimeoutMs?: number
   /**
-   * 'spawn' (default): the handoff button spawns a fresh agent turn.
-   * 'signal': only broadcast handoff_requested over the WebSocket — for when
+   * 'spawn': the legacy handoff API spawns a fresh agent turn.
+   * 'signal' (default): only broadcast handoff_requested over the WebSocket — for when
    * a long-running main session is attached (e.g. via a ws monitor) and
    * should answer with its full context instead of a stateless turn.
    */
@@ -117,7 +120,8 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
     let data: CanvasData | undefined
     try {
       data = (await readBoard(root, board)).data
-    } catch {
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') { broadcast({ type: 'sync_error', board, error: 'Canvas is temporarily unreadable. Waiting for a valid saved file.' }); return }
       data = undefined
     }
     if (!data) {
@@ -140,7 +144,7 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
       return
     }
     const diff = diffBoards(before, data)
-    if (isEmptyDiff(diff)) return
+    if (isEmptyDiff(diff) && JSON.stringify(before) === JSON.stringify(data)) return
     if (await recentAgentWrite(root, board)) {
       // the agent already logged its own event; just push the signal
       broadcast({ type: 'board_changed', board })
@@ -179,7 +183,8 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
       broadcast({ type: 'chat_changed' })
       return
     }
-    if (signal.board) void onCanvasChange(signal.board)
+    if (signal.type === 'file') { broadcast({ type: 'file_changed', path: signal.board }); return }
+    if (signal.board) void onCanvasChange(signal.board).catch(e => broadcast({ type: 'sync_error', error: String(e) }))
   })
 
   const summoner = createSummoner(root, {
@@ -204,7 +209,7 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
   const server: Server = createServer((req, res) => {
     void route(req, res).catch((error) => {
       reporter.send('error', { source: 'api', method: req.method, path: req.url?.split('?')[0], ...errorDetail(error) })
-      sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) })
+      sendJson(res, error instanceof ConflictError ? 409 : 400, { error: error instanceof Error ? error.message : String(error) })
     })
   })
 
@@ -214,9 +219,18 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
     return url.searchParams.get('token') === options.token
   }
 
+  const safeOrigin = (req: IncomingMessage) => {
+    const hostname = (req.headers.host ?? '').split(':')[0]
+    if (host === '127.0.0.1' && !['127.0.0.1', 'localhost'].includes(hostname)) return false
+    return !req.headers.origin || req.headers.origin === `http://${req.headers.host}`
+  }
+
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const { pathname } = url
+    if (!safeOrigin(req)) return sendJson(res, 403, { error: 'Cross-origin access is not allowed.' })
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Referrer-Policy', 'no-referrer')
 
     if (pathname.startsWith('/api') && !authorized(req, url)) {
       return sendJson(res, 401, { error: 'unauthorized — pass ?token= or an Authorization: Bearer header' })
@@ -276,9 +290,9 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
     if (pathname === '/api/board' && req.method === 'GET') {
       const board = url.searchParams.get('path')
       if (!board) return sendJson(res, 400, { error: 'missing "path"' })
-      const { data } = await readBoard(root, board)
+      const { data, revision } = await readBoard(root, board)
       const pinned = await getPinned(root, board)
-      return sendJson(res, 200, { path: board, data, pinned: [...pinned] })
+      return sendJson(res, 200, { path: board, data, revision, pinned: [...pinned] })
     }
     if (pathname === '/api/active' && req.method === 'POST') {
       const body = (await readJson(req)) as { board?: string }
@@ -291,15 +305,17 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
       return sendJson(res, 200, { ok: true })
     }
     if (pathname === '/api/mutate' && req.method === 'POST') {
-      const body = (await readJson(req)) as { board?: string; changes?: Mutation[] }
+      const body = (await readJson(req)) as { board?: string; changes?: Mutation[]; expectedRevision?: string }
       if (!body.board || !Array.isArray(body.changes) || body.changes.length === 0) {
         return sendJson(res, 400, { error: 'need "board" and non-empty "changes"' })
       }
-      const { data, style } = await readBoard(root, body.board)
+      if (!body.expectedRevision) return sendJson(res, 428, { error: 'Read the board first and supply expectedRevision.' })
+      const { data, style, revision: beforeRevision } = await readBoard(root, body.board)
+      if (body.expectedRevision !== beforeRevision) throw new ConflictError()
       const working = structuredClone(data) as CanvasData
       const outcome = applyMutations(working, body.changes)
       markSelfWrite(body.board)
-      await writeBoard(root, body.board, working, style)
+      const revision = await writeBoard(root, body.board, working, style, body.expectedRevision)
       git.touch(`edit ${body.board}`)
       snapshots.set(body.board, working)
       if (outcome.movedIds.length > 0) await addPinned(root, body.board, outcome.movedIds)
@@ -311,7 +327,16 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
         detail: { summary: outcome.summary },
       })
       broadcast({ type: 'board_changed', board: body.board })
-      return sendJson(res, 200, { ok: true, summary: outcome.summary })
+      return sendJson(res, 200, { ok: true, summary: outcome.summary, revision })
+    }
+    if (pathname === '/api/selection' && req.method === 'POST') {
+      return sendJson(res, 200, await saveSelection(root, await readJson(req) as Omit<Selection, 'updatedAt'>))
+    }
+    if (pathname === '/api/selection' && req.method === 'GET') {
+      return sendJson(res, 200, await getSelection(root, url.searchParams.get('sessionId') ?? undefined))
+    }
+    if (pathname === '/api/reference' && req.method === 'POST') {
+      return sendJson(res, 200, await createReference(root, await readJson(req) as Omit<Selection, 'updatedAt'>))
     }
     if (pathname === '/api/events' && req.method === 'GET') {
       const since = url.searchParams.get('since') ?? undefined
@@ -354,9 +379,10 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
         .toISOString()
         .slice(0, 19)
         .replace(/[-:T]/g, '')
-      const rel = `assets/${stamp}-${base || 'image'}.${ext}`
-      await mkdir(path.join(root, 'assets'), { recursive: true })
-      await writeFile(path.join(root, rel), Buffer.concat(chunks))
+      const rel = `assets/${stamp}-${randomUUID().slice(0, 8)}-${base || 'image'}.${ext}`
+      const absolute = await vaultPath(root, rel)
+      await mkdir(path.dirname(absolute), { recursive: true })
+      await writeFile(absolute, Buffer.concat(chunks), { flag: 'wx' })
       return sendJson(res, 200, { ok: true, path: rel })
     }
     if (pathname === '/api/debug' && req.method === 'POST') {
@@ -401,7 +427,7 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
         }
       }
       broadcast({ type: 'handoff_requested', note: note ?? null })
-      if ((options.handoffMode ?? 'spawn') === 'signal') {
+      if ((options.handoffMode ?? 'signal') === 'signal') {
         return sendJson(res, 202, { ok: true, mode: 'signal' })
       }
       if (summoner.running) return sendJson(res, 409, { error: 'an agent turn is already running' })
@@ -413,7 +439,7 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
       if (!rel) return sendJson(res, 400, { error: 'missing "path"' })
       let abs: string
       try {
-        abs = repoFilePath(root, rel)
+        abs = await vaultPath(root, rel)
       } catch (e) {
         return sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
       }
@@ -429,17 +455,16 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
         // every select/board-reload (field: "有圖的卡一點擊就重新下載").
         // Other repo files can change, so they only get revalidation.
         const relNorm = rel.replace(/\\/g, '/')
-        const cache = relNorm.startsWith('assets/')
-          ? 'public, max-age=31536000, immutable'
-          : 'no-cache'
+        const cache = 'no-cache'
         res.writeHead(200, {
           'content-type': MIME[path.extname(abs).toLowerCase()] ?? 'application/octet-stream',
           'cache-control': cache,
+          'content-security-policy': "sandbox; default-src 'none'",
         })
         return void res.end(buffer)
       }
       if (buffer.length > 512 * 1024) return sendJson(res, 413, { error: 'file too large to inline' })
-      return sendJson(res, 200, { path: rel, text: buffer.toString('utf8') })
+      return sendJson(res, 200, { path: rel, text: excerpt(buffer.toString('utf8'), url.searchParams.get('subpath') ?? undefined) })
     }
 
     if (req.method === 'GET') return serveStatic(pathname, res)
@@ -479,7 +504,7 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
 
   const wss = new WebSocketServer({ server, path: '/ws' })
   wss.on('connection', (socket, req) => {
-    if (!authorized(req, new URL(req.url ?? '/', 'http://localhost'))) {
+    if (!safeOrigin(req) || !authorized(req, new URL(req.url ?? '/', 'http://localhost'))) {
       socket.close(4401, 'unauthorized')
       return
     }
@@ -493,7 +518,7 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
     })()
   })
 
-  await new Promise<void>((resolve) => server.listen(options.port ?? 5199, host, resolve))
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.port ?? 5199, host, resolve) }).catch(e => { watcher.close(); wss.close(); throw e })
   const address = server.address()
   const port = typeof address === 'object' && address ? address.port : (options.port ?? 5199)
 

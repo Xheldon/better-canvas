@@ -1,3 +1,5 @@
+> Historical canvai documentation. For Better Canvas, follow the [README](../README.md) and [current compatibility contract](compatibility.md).
+
 # canvai — founding design document
 
 *2026-07-03 · status: RFC. Everything here is open to challenge — open an issue citing the decision number (D1–D5).*

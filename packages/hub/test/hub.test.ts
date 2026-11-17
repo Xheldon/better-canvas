@@ -4,6 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { revisionOf } from '../src/storage.ts'
 import { createHubServer } from '../src/server.ts'
 
 // old-dialect fixture: tabs, unspaced colons — style must survive agent edits
@@ -60,6 +61,7 @@ describe('canvai hub over MCP', () => {
     const applied = await client.callTool({
       name: 'apply_ops',
       arguments: {
+        expectedRevision: revisionOf(await readFile(path.join(root, 'discuss/demo.canvas'), 'utf8')),
         ops: [
           { op: 'add_node', text: 'agent thought', anchor: 'cafe', ref: 'a' },
           { op: 'add_node', text: 'follow-up', anchor: '$a', dir: 'below', ref: 'b' },
@@ -87,7 +89,7 @@ describe('canvai hub over MCP', () => {
     expect(textOf(full)).toBe(raw)
 
     // layout runs and keeps the board parseable
-    const layout = await client.callTool({ name: 'auto_layout', arguments: {} })
+    const layout = await client.callTool({ name: 'auto_layout', arguments: { expectedRevision: revisionOf(raw) } })
     expect(textOf(layout)).toContain('re-laid out')
 
     // new boards can be spun up for new topics
@@ -104,6 +106,7 @@ describe('canvai hub over MCP', () => {
     const result = await client.callTool({
       name: 'apply_ops',
       arguments: {
+        expectedRevision: revisionOf(await readFile(path.join(root, 'discuss/demo.canvas'), 'utf8')),
         ops: [
           { op: 'add_node', text: 'will be rolled back' },
           { op: 'delete_node', id: 'zzzz' },

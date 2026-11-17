@@ -74,6 +74,8 @@ export interface ChatMessage {
 export type HubMessage =
   | { type: 'hello'; active: string | null; busy?: boolean }
   | { type: 'boards_changed' }
+  | { type: 'file_changed'; path: string }
+  | { type: 'sync_error'; error: string }
   | { type: 'board_changed'; board: string }
   | { type: 'active_changed'; active: string | null }
   | { type: 'chat_changed' }
@@ -95,13 +97,21 @@ async function json<T>(response: Response): Promise<T> {
   return (await response.json()) as T
 }
 
+const revisions = new Map<string, string>()
+const queues = new Map<string, Promise<{ revision: string }>>()
+export const browserSessionId = crypto.randomUUID()
+export interface SelectionInput { sessionId: string; board: string; nodeIds: string[]; edgeIds: string[]; revision: string }
+
 export const api = {
+  revision: (board: string) => revisions.get(board) ?? '',
+  selection: (value: SelectionInput) => request('/api/selection', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) }).then(r => json<SelectionInput>(r)),
+  reference: (value: SelectionInput) => request('/api/reference', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) }).then(r => json<{ id: string; citation: string }>(r)),
   boards: () =>
     request('/api/boards').then((r) => json<{ boards: BoardInfo[]; active: string | null; root?: string }>(r)),
   board: (path: string) =>
     request(`/api/board?path=${encodeURIComponent(path)}`).then((r) =>
-      json<{ path: string; data: CanvasData; pinned: string[] }>(r),
-    ),
+      json<{ path: string; data: CanvasData; pinned: string[]; revision: string }>(r),
+    ).then(result => { revisions.set(path, result.revision); return result }),
   createBoard: (path: string) =>
     request('/api/boards', {
       method: 'POST',
@@ -126,12 +136,21 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ from, to }),
     }).then((r) => json<{ ok: boolean }>(r)),
-  mutate: (board: string, changes: Mutation[]) =>
-    request('/api/mutate', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ board, changes }),
-    }).then((r) => json<{ ok: boolean; summary: string[] }>(r)),
+  mutate: (board: string, changes: Mutation[]) => {
+    const before = revisions.get(board)
+    const previous = queues.get(board)
+    const work = (previous ?? Promise.resolve(undefined)).then(async prior => {
+      const result = await request('/api/mutate', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ board, changes, expectedRevision: prior?.revision ?? before }),
+      }).then(r => json<{ ok: boolean; summary: string[]; revision: string }>(r))
+      revisions.set(board, result.revision)
+      return result
+    })
+    queues.set(board, work)
+    void work.finally(() => { if (queues.get(board) === work) queues.delete(board) }).catch(() => {})
+    return work
+  },
   chat: (since?: string) =>
     request(`/api/chat${since ? `?since=${encodeURIComponent(since)}` : ''}`).then((r) =>
       json<{ messages: ChatMessage[]; cursor?: string }>(r),
@@ -148,14 +167,14 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ note }),
     }).then((r) => json<{ ok: boolean }>(r)),
-  file: (path: string) =>
-    request(`/api/file?path=${encodeURIComponent(path)}`).then((r) => json<{ path: string; text: string }>(r)),
+  file: (path: string, subpath?: string) =>
+    request(`/api/file?path=${encodeURIComponent(path)}${subpath ? `&subpath=${encodeURIComponent(subpath)}` : ''}`).then((r) => json<{ path: string; text: string }>(r)),
   upload: (blob: Blob, name: string) =>
     request(`/api/upload?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob }).then((r) =>
       json<{ ok: boolean; path: string }>(r),
     ),
-  fileRawUrl: (path: string) =>
-    `/api/file?path=${encodeURIComponent(path)}&raw=1${TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : ''}`,
+  fileRawUrl: (path: string, version?: number) =>
+    `/api/file?path=${encodeURIComponent(path)}&raw=1${version ? `&v=${version}` : ''}${TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : ''}`,
 }
 
 // photos go into the git repo (assets/) — compress client-side so a 6MB

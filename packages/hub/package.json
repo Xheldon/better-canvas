@@ -1,20 +1,20 @@
 {
-  "name": "@chuck00lin/canvai",
-  "version": "0.1.0",
+  "name": "@xheldon/better-canvas",
+  "version": "0.2.0",
   "publishConfig": {
     "access": "public"
   },
-  "description": "Repo-native JSON Canvas whiteboard for humans + AI agents — discuss with your coding agent on a shared canvas; boards are plain files in your repo.",
+  "description": "Local Obsidian Canvas editor with MCP and ChatGPT/Codex plugin support.",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "canvai": "dist/canvai.mjs"
+    "better-canvas": "dist/better-canvas.mjs"
   },
   "files": [
     "dist"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22.18"
   },
   "keywords": [
     "canvas",
@@ -28,13 +28,13 @@
     "diagram",
     "mermaid"
   ],
-  "homepage": "https://github.com/chuck00lin/canvai#readme",
+  "homepage": "https://github.com/Xheldon/better-canvas",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/chuck00lin/canvai.git"
+    "url": "git+https://github.com/Xheldon/better-canvas.git"
   },
   "bugs": {
-    "url": "https://github.com/chuck00lin/canvai/issues"
+    "url": "https://github.com/Xheldon/better-canvas/issues"
   },
   "scripts": {
     "build": "node build.mjs",
@@ -44,8 +44,8 @@
     "@canvai/canvas-kit": "0.1.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@types/ws": "^8.5.13",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.2",
     "ws": "^8.18.0",
-    "zod": "^3.24.0"
+    "zod": "^4.6.7"
   }
 }

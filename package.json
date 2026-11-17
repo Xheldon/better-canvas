@@ -1,12 +1,12 @@
 {
-  "name": "canvai-monorepo",
+  "name": "better-canvas",
   "private": true,
   "type": "module",
   "workspaces": [
     "packages/*"
   ],
   "engines": {
-    "node": ">=23.6"
+    "node": ">=22.18"
   },
   "scripts": {
     "test": "vitest run",
@@ -15,11 +15,14 @@
     "serve": "node packages/hub/src/cli.ts serve",
     "web:dev": "npm run dev -w @canvai/web",
     "web:build": "npm run build -w @canvai/web",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "build": "npm run build -w @xheldon/better-canvas",
+    "plugin:pack": "node scripts/package-plugin.mjs",
+    "test:package": "node scripts/test-package.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.0"
+    "vitest": "^5.1.0"
   }
 }

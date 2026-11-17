@@ -160,38 +160,37 @@ export function toFlow(data: CanvasData, pinned: ReadonlySet<string>): { nodes: 
     for (const g of groups) {
       if (g.id === node.id) continue
       if (!contains(g, node)) continue
+      // Equal-size coincident groups must not become cyclic parents.
+      if (g.width * g.height <= node.width * node.height) continue
       if (!best || g.width * g.height < best.width * best.height) best = g
     }
     return best
   }
 
+  const parents = new Map(all.map(n => [n.id, containerOf(n)]))
   const flowNodes: PSFlowNode[] = []
-  for (const g of groups) {
-    flowNodes.push({
-      id: g.id,
-      type: railGroupIds.has(g.id) ? 'railGroup' : 'group',
-      position: { x: g.x, y: g.y },
-      style: { width: g.width, height: g.height },
-      zIndex: -10,
-      data: { node: g, pinned: pinned.has(g.id) },
-    })
-  }
-  for (const n of all) {
-    if (n.type === 'group') continue
-    const parent = containerOf(n)
+  const done = new Set<string>()
+  const append = (n: CanvasNode) => {
+    if (done.has(n.id)) return
+    const parent = parents.get(n.id)
+    if (parent) append(parent)
+    done.add(n.id)
     const joint = jointIds.has(n.id)
+    const order = all.indexOf(n)
     flowNodes.push({
       id: n.id,
-      type: joint ? 'railJoint' : n.type === 'file' || n.type === 'link' ? n.type : 'text',
+      type: railGroupIds.has(n.id) ? 'railGroup' : joint ? 'railJoint' : n.type,
       position: parent ? { x: n.x - parent.x, y: n.y - parent.y } : { x: n.x, y: n.y },
       ...(parent ? { parentId: parent.id } : {}),
-      // the slot grid belongs to the rail: joints are not individually
-      // draggable or selectable — drag the rail group instead
       ...(joint ? { draggable: false, selectable: false } : {}),
-      style: { width: n.width, height: n.height },
+      style: { width: n.width, height: n.height, '--bc-z': order } as PSFlowNode['style'],
+      zIndex: order,
+      ariaLabel: `Canvas card ${n.id}: ${(n.label ?? n.file ?? n.text ?? n.url ?? '').slice(0, 100)}`,
+      domAttributes: { 'data-canvas-node-id': n.id } as PSFlowNode['domAttributes'],
       data: { node: n, pinned: pinned.has(n.id), ...(joint ? { occupied: occupiedJoints.has(n.id) } : {}) },
     })
   }
+  all.forEach(append)
 
   const byId = new Map(all.map((n) => [n.id, n]))
   const flowEdges: FlowEdge[] = (data.edges ?? []).map((e) => {

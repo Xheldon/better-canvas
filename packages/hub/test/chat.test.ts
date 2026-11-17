@@ -22,7 +22,7 @@ async function setup(agentCmd?: string, handoffMode?: 'spawn' | 'signal') {
   const root = await mkdtemp(path.join(tmpdir(), 'canvai-chat-'))
   await mkdir(path.join(root, 'discuss'), { recursive: true })
   await writeFile(path.join(root, 'discuss', 'demo.canvas'), FIXTURE, 'utf8')
-  running = await startServe(root, { port: 0, agentCmd, handoffMode })
+  running = await startServe(root, { port: 0, agentCmd, handoffMode: handoffMode ?? (agentCmd ? 'spawn' : 'signal') })
   return { root, base: `http://127.0.0.1:${running.port}`, port: running.port }
 }
 

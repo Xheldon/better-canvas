@@ -8,7 +8,7 @@ import path from 'node:path'
  */
 
 export interface WatchSignal {
-  type: 'canvas' | 'state' | 'chat'
+  type: 'canvas' | 'state' | 'chat' | 'file'
   /** repo-relative board path for type=canvas */
   board?: string
 }
@@ -48,8 +48,8 @@ export function watchRoot(root: string, onSignal: (signal: WatchSignal) => void)
     }
     // ignore dotted dirs (.git, .obsidian, .canvai) and our tmp files
     if (segments.some((s) => s.startsWith('.')) || segments.includes('node_modules')) return
-    if (!base.endsWith('.canvas')) return
-    schedule(rel, { type: 'canvas', board: rel })
+    if (segments.some(s => ['dist', 'build', 'coverage'].includes(s))) return
+    schedule(rel, { type: base.endsWith('.canvas') ? 'canvas' : 'file', board: rel })
   })
 
   return {

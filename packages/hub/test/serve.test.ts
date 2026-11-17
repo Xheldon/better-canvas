@@ -5,6 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import WebSocket from 'ws'
 import { parseCanvas, serializeCanvas } from '@canvai/canvas-kit'
+import { revisionOf } from '../src/storage.ts'
 import { startServe, type RunningServer } from '../src/serve.ts'
 
 const FIXTURE = [
@@ -69,6 +70,7 @@ describe('canvai hub serve mode', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         board: 'discuss/demo.canvas',
+        expectedRevision: revisionOf(FIXTURE),
         changes: [{ kind: 'set_geometry', id: 'cafe000011112222', x: 400, y: 200 }],
       }),
     })

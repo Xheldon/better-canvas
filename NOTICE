@@ -1,0 +1,8 @@
+Better Canvas is derived from canvai (https://github.com/chuck00lin/canvai),
+licensed under the MIT License. The original license is preserved in LICENSE
+and the upstream Git history is retained.
+
+Better Canvas modifications copyright (c) 2026 Xheldon.
+
+The editor uses React Flow (@xyflow/react), React, marked, DOMPurify, Mermaid,
+ELK, and the Model Context Protocol SDK. Their respective licenses apply.

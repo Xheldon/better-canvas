@@ -1,6 +1,11 @@
+import { realpath, stat } from 'node:fs/promises'
+import { startServe, type RunningServer } from './serve.ts'
+import { ConflictError, readNote, revisionOf, writeVersioned } from './storage.ts'
+import { getSelection, readReference } from './selection.ts'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import {
+  parseCanvas,
   applyOps,
   autoLayout,
   railMemberIds,
@@ -146,15 +151,64 @@ function formatEvent(event: HubEvent): string {
   return `[${event.origin}] ${time} ${event.kind}${board}${detail}`
 }
 
-export function createHubServer(root: string): McpServer {
-  const server = new McpServer({ name: 'canvai-hub', version: '0.1.0' })
+export function createHubServer(root: string = '', webDist?: string): McpServer {
+  const server = new McpServer({ name: 'better-canvas', version: '0.2.0' })
+  let preview: RunningServer | undefined
+  const requireRoot = () => { if (!root) throw new Error('Choose a vault using open_vault first.') }
+  server.server.onclose = () => { void preview?.close(); preview = undefined }
 
   const resolveBoard = async (board?: string): Promise<string> => {
+    requireRoot()
     if (board) return board
     const active = await getActiveBoard(root)
     if (active) return active
     throw new Error('no active board — pass "board" or call set_active_board first (list_boards shows candidates)')
   }
+
+  server.registerTool('open_vault', {
+    title: 'Open a local vault', description: 'Choose the local folder explicitly provided by the user. This changes the scope of all tools. Does not scan other folders.',
+    inputSchema: { path: z.string().describe('Absolute local vault path, supplied by the user') },
+  }, async ({ path }) => {
+    try {
+      const resolved = await realpath(path)
+      if (!(await stat(resolved)).isDirectory()) throw new Error('Vault must be a directory.')
+      if (root !== resolved) { await preview?.close(); preview = undefined }
+      root = resolved
+      return text(JSON.stringify({ vault: root, boards: await listBoards(root) }))
+    } catch (e) { return fail(e) }
+  })
+  server.registerTool('start_preview', {
+    title: 'Start browser preview', description: 'Start the local Canvas editor for the selected vault and return its URL. Open the URL in the host browser panel. No separate AI chat is launched.',
+    inputSchema: { port: z.number().int().min(0).max(65535).optional() },
+  }, async ({ port }) => {
+    try {
+      requireRoot()
+      preview ??= await startServe(root, { port: port ?? 0, webDist, handoffMode: 'signal' })
+      return text(JSON.stringify({ url: `http://127.0.0.1:${preview.port}/`, vault: root }))
+    } catch (e) { return fail(e) }
+  })
+  server.registerTool('get_selection', {
+    title: 'Read selected cards', description: 'Read the connected browser selection, exact IDs, card content and current board revision. Multiple browser tabs require an explicit sessionId; stale selections are marked.',
+    inputSchema: { sessionId: z.string().optional() },
+  }, async ({ sessionId }) => { try { requireRoot(); return text(JSON.stringify(await getSelection(root, sessionId))) } catch (e) { return fail(e) } })
+  server.registerTool('read_reference', {
+    title: 'Read a card reference', description: 'Resolve a copied reference ID from the chat. Includes the original snapshot, current nodes and revision, and a stale flag.',
+    inputSchema: { id: z.string() },
+  }, async ({ id }) => { try { requireRoot(); return text(JSON.stringify(await readReference(root, id))) } catch (e) { return fail(e) } })
+  server.registerTool('read_note', {
+    title: 'Read a linked note', description: 'Read a vault-relative Markdown/text note, optionally one heading or block. Revision always refers to the entire file.',
+    inputSchema: { path: z.string(), subpath: z.string().optional() },
+  }, async ({ path, subpath }) => { try { requireRoot(); return text(JSON.stringify(await readNote(root, path, subpath))) } catch (e) { return fail(e) } })
+  server.registerTool('update_note', {
+    title: 'Update a linked note', description: 'Replace the full Markdown/text file after reading it without subpath. Preserve unrelated content and frontmatter. Requires the last read revision; keeps a recovery copy.',
+    inputSchema: { path: z.string(), text: z.string().max(2 * 1024 * 1024), expectedRevision: z.string() },
+  }, async ({ path, text: next, expectedRevision }) => {
+    try {
+      requireRoot()
+      await readNote(root, path)
+      return text(JSON.stringify({ path, revision: await writeVersioned(root, path, next, expectedRevision) }))
+    } catch (e) { return fail(e) }
+  })
 
   server.registerTool(
     'list_boards',
@@ -166,6 +220,7 @@ export function createHubServer(root: string): McpServer {
     },
     async () => {
       try {
+        requireRoot()
         const [boards, active] = await Promise.all([listBoards(root), getActiveBoard(root)])
         if (boards.length === 0) return text('no boards found — create one with create_board (e.g. "discuss/topic.canvas")')
         const lines = boards.map(
@@ -188,6 +243,7 @@ export function createHubServer(root: string): McpServer {
     },
     async ({ path: rel }) => {
       try {
+        requireRoot()
         await createBoard(root, rel)
         await appendEvent(root, { origin: 'agent', kind: 'board_created', board: rel })
         return text(`created ${rel}`)
@@ -206,6 +262,7 @@ export function createHubServer(root: string): McpServer {
     },
     async ({ board }) => {
       try {
+        requireRoot()
         await readBoardRaw(root, board) // verify it exists
         await setActiveBoard(root, board)
         await appendEvent(root, { origin: 'agent', kind: 'active_changed', board })
@@ -226,6 +283,7 @@ export function createHubServer(root: string): McpServer {
     },
     async () => {
       try {
+        requireRoot()
         const active = await getActiveBoard(root)
         if (!active) {
           const boards = await listBoards(root)
@@ -257,10 +315,12 @@ export function createHubServer(root: string): McpServer {
     },
     async ({ board, mode }) => {
       try {
+        requireRoot()
         const rel = await resolveBoard(board)
-        if (mode === 'full') return text(await readBoardRaw(root, rel))
-        const { data } = await readBoard(root, rel)
-        return text(structuralProjection(data, rel).text)
+        const raw = await readBoardRaw(root, rel)
+        const { data } = parseCanvas(raw)
+        const revision = revisionOf(raw)
+        return { ...text(mode === 'full' ? raw : `revision: ${revision}\n${structuralProjection(data, rel).text}`), structuredContent: { board: rel, revision, data } }
       } catch (e) {
         return fail(e)
       }
@@ -274,22 +334,25 @@ export function createHubServer(root: string): McpServer {
       description:
         'Edit a board with semantic ops (add_node/add_group/update_node/delete_node/connect/disconnect/move). ' +
         'Positions are computed for you — anchor new nodes to existing ones instead of thinking in pixels. ' +
-        'For anything sequence-shaped (timelines, fishbones, journeys) use rails: add_rail creates a horizontal or ' +
+        'Preserve existing coordinates unless the user requests movement. For anything sequence-shaped (timelines, fishbones, journeys) use rails: add_rail creates a horizontal or ' +
         'vertical arrow with evenly spaced slots, attach_to_rail/rail_reorder/rail_detach manage cards on it as an ' +
         'ordered list, and auto_layout never disturbs a rail. pin/unpin protect any other hand-arranged node. ' +
         'The batch is atomic: all ops apply or none do.',
       inputSchema: {
         board: z.string().optional().describe('defaults to the active board'),
         ops: z.array(opSchema).min(1),
+        expectedRevision: z.string().describe('Revision returned by read_board. Conflicting edits are rejected.'),
       },
     },
-    async ({ board, ops }) => {
+    async ({ board, ops, expectedRevision }) => {
       try {
+        requireRoot()
         const rel = await resolveBoard(board)
-        const { data, style } = await readBoard(root, rel)
+        const { data, style, revision: beforeRevision } = await readBoard(root, rel)
+        if (beforeRevision !== expectedRevision) throw new ConflictError()
         const working = structuredClone(data) as CanvasData
         const result = applyOps(working, ops as Op[])
-        await writeBoard(root, rel, working, style)
+        await writeBoard(root, rel, working, style, expectedRevision)
         if (result.deleted.length > 0) await removePinned(root, rel, result.deleted)
         if (result.pins.length > 0) await addPinned(root, rel, result.pins)
         if (result.unpins.length > 0) await removePinned(root, rel, result.unpins)
@@ -311,22 +374,25 @@ export function createHubServer(root: string): McpServer {
     {
       title: 'Auto-layout board',
       description:
-        'Run ELK layered layout over the board. Human-arranged (pinned) nodes do not move — the rest flows around ' +
+        'Only when the user explicitly requests rearranging: run ELK layered layout over the board. Human-arranged (pinned) nodes do not move — the rest flows around ' +
         'them; groups move as blocks. Use after larger edits; prefer anchors for small additions.',
       inputSchema: {
         board: z.string().optional(),
         direction: z.enum(['RIGHT', 'DOWN', 'LEFT', 'UP']).optional(),
+        expectedRevision: z.string(),
       },
     },
-    async ({ board, direction }) => {
+    async ({ board, direction, expectedRevision }) => {
       try {
+        requireRoot()
         const rel = await resolveBoard(board)
-        const { data, style } = await readBoard(root, rel)
+        const { data, style, revision: beforeRevision } = await readBoard(root, rel)
+        if (beforeRevision !== expectedRevision) throw new ConflictError()
         const working = structuredClone(data) as CanvasData
         // rails are rigid by construction: their members join the pinned set for this pass
         const pinned = new Set([...(await getPinned(root, rel)), ...railMemberIds(working)])
         await autoLayout(working, { direction, pinned })
-        await writeBoard(root, rel, working, style)
+        await writeBoard(root, rel, working, style, expectedRevision)
         await appendEvent(root, { origin: 'agent', kind: 'layout', board: rel })
         return text(`re-laid out ${rel}${pinned.size > 0 ? ` (respected ${pinned.size} pinned nodes)` : ''}`)
       } catch (e) {
@@ -346,6 +412,7 @@ export function createHubServer(root: string): McpServer {
     },
     async ({ cursor }) => {
       try {
+        requireRoot()
         const { events, cursor: next } = await readEventsSince(root, cursor)
         if (events.length === 0) return text(cursor ? `no new events\ncursor: ${cursor}` : 'no events yet')
         const lines = coalesceEvents(events).map(({ event, count }) => formatEvent(event) + (count > 1 ? ` ×${count}` : ''))
@@ -368,6 +435,7 @@ export function createHubServer(root: string): McpServer {
     },
     async ({ text: message, board }) => {
       try {
+        requireRoot()
         await appendChat(root, { from: 'agent', text: message, board })
         return text('posted')
       } catch (e) {
@@ -385,6 +453,7 @@ export function createHubServer(root: string): McpServer {
     },
     async ({ since }) => {
       try {
+        requireRoot()
         const { messages, cursor } = await readChatSince(root, since)
         if (messages.length === 0) return text(since ? `no new messages\ncursor: ${since}` : 'no messages yet')
         const lines = messages.map((m) => `${m.from} (${m.ts.slice(11, 16)}): ${m.text}`)

@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import '@xyflow/react/dist/style.css'
 import './styles.css'
+import './better-canvas.css'
 import { App } from './App'
 import { LocaleProvider } from './i18n'
 

@@ -22,7 +22,7 @@ import {
   type Edge as FlowEdge,
   type Node as FlowNode,
 } from '@xyflow/react'
-import { api, type CanvasData, type Mutation } from '../api'
+import { api, browserSessionId, type CanvasData, type Mutation } from '../api'
 import { BoardActions, Connecting, EditRequest, type BoardActionsValue, type EditRequestValue } from './actions'
 import { clipRead, clipWrite, parsePayload, type ClipCard, type ClipPayload } from './clipboard'
 import {
@@ -61,6 +61,9 @@ export function CanvasBoard(props: Props) {
 function BoardInner({ path, changeSignal }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<PSFlowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([])
+  const [reference, setReference] = useState<{ citation: string; id: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [failedDraft, setFailedDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const dragging = useRef(false)
   const pendingReload = useRef(false)
@@ -87,6 +90,7 @@ function BoardInner({ path, changeSignal }: Props) {
   const findIdx = useRef(0)
   const findInputRef = useRef<HTMLInputElement>(null)
   const boardRef = useRef<HTMLDivElement>(null)
+  const clickSelectionStart = useRef<string[]>([])
 
   // WebKit ignores touch-action on descendants of CSS-transformed ancestors
   // (every card lives inside the transformed viewport) — CSS alone leaves
@@ -383,7 +387,9 @@ function BoardInner({ path, changeSignal }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const { data, pinned } = await api.board(path)
+      const previousRevision = api.revision(path)
+      const { data, pinned, revision } = await api.board(path)
+      if (boardDataRef.current && previousRevision && previousRevision !== revision) { undoStack.current = []; redoStack.current = [] }
       boardDataRef.current = data // undo/redo snapshot baseline
       const mapped = toFlow(data, new Set(pinned))
       // selection survives sync reloads — e.g. picking a color triggers a
@@ -396,7 +402,7 @@ function BoardInner({ path, changeSignal }: Props) {
         const selected = new Set(previous.filter((e) => e.selected).map((e) => e.id))
         return mapped.edges.map((e) => (selected.has(e.id) ? { ...e, selected: true } : e))
       })
-      setError(null)
+      // Keep rejected drafts visible until the user explicitly dismisses them.
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -432,7 +438,7 @@ function BoardInner({ path, changeSignal }: Props) {
       api
         .mutate(path, [{ kind: 'replace_board', data }])
         .then(() => load())
-        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+        .catch((e) => { setFailedDraft(JSON.stringify(data, null, 2)); setError(e instanceof Error ? e.message : String(e)) })
     },
     [path, load],
   )
@@ -461,7 +467,7 @@ function BoardInner({ path, changeSignal }: Props) {
     (changes: Mutation[]) => {
       if (changes.length === 0) return
       snapshot()
-      api.mutate(path, changes).catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      api.mutate(path, changes).catch((e) => { setFailedDraft(JSON.stringify(changes, null, 2)); setError(e instanceof Error ? e.message : String(e)) })
       // the hub broadcasts board_changed, which triggers the reload
     },
     [path, snapshot],
@@ -630,7 +636,10 @@ function BoardInner({ path, changeSignal }: Props) {
         // moving a group moves its members' absolute positions too
         if (current.type === 'group' || current.type === 'railGroup') {
           for (const child of map.values()) {
-            if (child.parentId === current.id && !moves.has(child.id)) {
+            let parent = child.parentId
+            const seen = new Set<string>()
+            while (parent && parent !== current.id && !seen.has(parent)) { seen.add(parent); parent = map.get(parent)?.parentId }
+            if (parent === current.id && !moves.has(child.id)) {
               moves.set(child.id, absolutePosition(child, map))
             }
           }
@@ -908,6 +917,19 @@ function BoardInner({ path, changeSignal }: Props) {
   // self-hosted path). Plain text from anywhere pastes as a new card.
   const selectionRef = useRef(selection)
   selectionRef.current = selection
+
+  const selectionInput = useCallback(() => ({ sessionId: browserSessionId, board: path,
+    nodeIds: selectionRef.current.nodes, edgeIds: selectionRef.current.edges, revision: api.revision(path) }), [path])
+  useEffect(() => {
+    const publish = () => { void api.selection(selectionInput()).catch(() => {}) }
+    const timer = setTimeout(publish, 100)
+    const heartbeat = setInterval(publish, 25_000)
+    return () => { clearTimeout(timer); clearInterval(heartbeat) }
+  }, [selection, path, changeSignal, selectionInput])
+  const askAI = useCallback(async () => {
+    try { setCopied(false); setReference(await api.reference(selectionInput())) }
+    catch (e) { setError(String(e)) }
+  }, [selectionInput])
 
   /** copy the given cards (default: current selection) plus the edges between them */
   const copyCards = useCallback((wanted?: string[]): boolean => {
@@ -1268,7 +1290,13 @@ function BoardInner({ path, changeSignal }: Props) {
     (event: ReactMouseEvent, node: FlowNode) => {
       // shift/cmd-click is a multi-select gesture — forcing single selection
       // here was clobbering React Flow's own multi-select handling
-      if (event.shiftKey || event.metaKey || event.ctrlKey) return
+      if (event.shiftKey || event.metaKey || event.ctrlKey) {
+        const wanted = new Set(clickSelectionStart.current)
+        wanted.has(node.id) ? wanted.delete(node.id) : wanted.add(node.id)
+        setNodes(ns => ns.map(n => ({ ...n, selected: wanted.has(n.id) })))
+        setSelection({ nodes: [...wanted], edges: [] })
+        return
+      }
       if (multiMode) {
         setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, selected: !n.selected } : n)))
         setSelection((prev) => {
@@ -1319,9 +1347,15 @@ function BoardInner({ path, changeSignal }: Props) {
     (event: ReactMouseEvent, node: FlowNode) => {
       event.preventDefault()
       if (coarse || node.type === 'railJoint') return
-      // select the node the menu is about — the actions read the selection
-      setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, selected: true } : { ...n, selected: false })))
-      setSelection({ nodes: [node.id], edges: [] })
+      // Right-click inside a multi-selection must keep the entire selection.
+      if (clickSelectionStart.current.includes(node.id)) {
+        const wanted = new Set(clickSelectionStart.current)
+        setNodes(ns => ns.map(n => ({ ...n, selected: wanted.has(n.id) })))
+        setSelection({ nodes: [...wanted], edges: [] })
+      } else {
+        setNodes(ns => ns.map(n => ({ ...n, selected: n.id === node.id })))
+        setSelection({ nodes: [node.id], edges: [] })
+      }
       setCtxMenu({ x: event.clientX, y: event.clientY, kind: 'node', id: node.id })
     },
     [coarse, setNodes],
@@ -1372,6 +1406,8 @@ function BoardInner({ path, changeSignal }: Props) {
     <div
       ref={boardRef}
       className="ps-board"
+      data-canvas-path={path}
+      onPointerDownCapture={event => { if ((event.target as HTMLElement).closest('.react-flow__node')) clickSelectionStart.current = nodesRef.current.filter(n => n.selected).map(n => n.id) }}
       onDoubleClick={onWrapperDoubleClick}
       // long-press must not open the browser context menu / selection callout
       onContextMenu={coarse ? (event) => event.preventDefault() : undefined}
@@ -1416,6 +1452,9 @@ function BoardInner({ path, changeSignal }: Props) {
             // (drag = pin) — but keep the dead zone small or drag starts
             // feel sticky
             nodeDragThreshold={coarse ? 5 : 1}
+            selectionKeyCode="Shift"
+            multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
+            elevateNodesOnSelect={false}
             fitView
             minZoom={0.05}
             zoomOnDoubleClick={false}
@@ -1457,6 +1496,9 @@ function BoardInner({ path, changeSignal }: Props) {
         </EditRequest.Provider>
        </Connecting.Provider>
       </BoardActions.Provider>
+      {(selection.nodes.length > 0 || selection.edges.length > 0) && <div className="bc-selection"><span>{selection.nodes.length} cards · {selection.edges.length} connections</span><button onClick={() => void askAI()}>Ask AI ↗</button></div>}
+      {reference && <div className="bc-dialog-backdrop" onClick={() => setReference(null)}><section className="bc-dialog" role="dialog" aria-modal="true" aria-label="Ask AI about selection" onClick={e => e.stopPropagation()}><button className="bc-dialog-close" aria-label="Close reference" onClick={() => setReference(null)}>×</button><h2>Bring these cards into your chat.</h2><p>Copy this reference, paste it into your existing chat, and describe what you want to change.</p><textarea aria-label="Canvas reference" readOnly value={reference.citation} onFocus={e => e.target.select()} /><button className="bc-primary" onClick={() => { void navigator.clipboard.writeText(reference.citation).then(() => setCopied(true)).catch(() => setError('Clipboard unavailable. Select and copy the reference above.')) }}>{copied ? 'Copied' : 'Copy reference'}</button><p className="bc-muted">The reference keeps these exact cards even if your selection changes. Your AI client needs the Better Canvas MCP connection.</p></section></div>}
+      {failedDraft && <div className="bc-dialog-backdrop"><section className="bc-dialog" role="dialog" aria-label="Unsaved edit"><h2>Your edit was not saved.</h2><p>{error}</p><textarea aria-label="Unsaved draft" readOnly value={failedDraft} /><p className="bc-muted">Copy your draft before reloading. No newer file was overwritten.</p><button className="bc-primary" onClick={() => { setFailedDraft(''); setError(null); void load() }}>Reload saved canvas</button></section></div>}
       {find.open && (
         <div className="ps-find">
           <input
@@ -1694,6 +1736,7 @@ function BoardInner({ path, changeSignal }: Props) {
                 top: Math.min(ctxMenu.y, window.innerHeight - 260),
               }}
             >
+              {(menuNode || (ctxMenu.kind === 'pane' && selection.nodes.length > 0)) && <button onClick={() => { void askAI(); close() }}>↗ Ask AI about selection ({selection.nodes.length})</button>}
               {menuNode && (
                 <>
                   {(menuNode.type === 'text' || menuNode.type === 'group' || menuNode.type === 'railGroup') && (

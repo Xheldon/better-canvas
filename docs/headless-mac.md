@@ -1,3 +1,5 @@
+> Historical canvai documentation. For Better Canvas, follow the [README](../README.md) and [current compatibility contract](compatibility.md).
+
 # Running canvai on an always-on Mac
 
 The hub is designed to live on a 24/7 machine: boards are files in repos, the

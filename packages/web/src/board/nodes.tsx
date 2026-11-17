@@ -186,7 +186,6 @@ function TextNode({ id, data, selected }: NodeProps<PSFlowNode>) {
   const finish = (save: boolean) => {
     if (!editing) return
     setEditing(false)
-    notifyEditing(false)
     // a just-created card left empty is discarded ONLY on an explicit cancel
     // (Escape, save=false). A blur — from dragging the card or clicking away —
     // means the human is keeping it (they placed it), so leave the empty card
@@ -196,9 +195,11 @@ function TextNode({ id, data, selected }: NodeProps<PSFlowNode>) {
     const result = save ? draft : (node.text ?? '')
     if ((node.text ?? '') === '' && result.trim() === '') {
       if (!save && !attaching.current) discardEmpty(id)
+      notifyEditing(false)
       return
     }
     if (save && draft !== (node.text ?? '')) commitText(id, draft)
+    notifyEditing(false)
   }
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return
@@ -334,6 +335,16 @@ function TextNode({ id, data, selected }: NodeProps<PSFlowNode>) {
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'])
 const TEXT_EXTS = new Set(['md', 'markdown', 'txt'])
 
+function useFileVersion(file: string) {
+  const [version, setVersion] = useState(0)
+  useEffect(() => {
+    const listener = (e: Event) => { if ((e as CustomEvent<string>).detail === file) setVersion(v => v + 1) }
+    window.addEventListener('better-canvas:file-changed', listener)
+    return () => window.removeEventListener('better-canvas:file-changed', listener)
+  }, [file])
+  return version
+}
+
 function FileNode({ id, data, selected }: NodeProps<PSFlowNode>) {
   const { commitGeometry } = useContext(BoardActions)
   const [hovered, hoverProps] = useHover(id)
@@ -349,14 +360,17 @@ function FileNode({ id, data, selected }: NodeProps<PSFlowNode>) {
   const node = data.node
   const file = node.file ?? ''
   const ext = file.split('.').pop()?.toLowerCase() ?? ''
+  const version = useFileVersion(file)
+  const subpath = typeof node.subpath === 'string' ? node.subpath : undefined
   const [content, setContent] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!TEXT_EXTS.has(ext)) return
     let cancelled = false
+    setLoadError(null)
     api
-      .file(file)
+      .file(file, subpath)
       .then((r) => {
         if (!cancelled) setContent(r.text)
       })
@@ -366,7 +380,7 @@ function FileNode({ id, data, selected }: NodeProps<PSFlowNode>) {
     return () => {
       cancelled = true
     }
-  }, [file, ext])
+  }, [file, ext, subpath, version])
 
   return (
     <div className={selected ? 'is-selected' : undefined} style={{ width: '100%', height: '100%' }} {...hoverProps}>
@@ -382,8 +396,9 @@ function FileNode({ id, data, selected }: NodeProps<PSFlowNode>) {
           </span>
         </div>
         <div className="ps-file-body nowheel">
-          {IMAGE_EXTS.has(ext) && <img src={api.fileRawUrl(file)} alt={file} />}
-          {TEXT_EXTS.has(ext) && content !== null && <Markdown text={content} />}
+          {IMAGE_EXTS.has(ext) && <img src={api.fileRawUrl(file, version)} alt={file} />}
+          {TEXT_EXTS.has(ext) && content !== null && !loadError && <Markdown text={content} />}
+          {!IMAGE_EXTS.has(ext) && !TEXT_EXTS.has(ext) && <div className="ps-file-error">Preview unavailable for this file type. Open it in Obsidian.</div>}
           {loadError && <div className="ps-file-error">{loadError}</div>}
         </div>
       </div>
@@ -433,6 +448,9 @@ function GroupNode({ id, data, selected }: NodeProps<PSFlowNode>) {
   const [editing, setEditingState] = useState(false)
   const [draft, setDraft] = useState('')
   const node = data.node
+  const background = typeof node.background === 'string' ? node.background : ''
+  const version = useFileVersion(background)
+  const backgroundStyle: CSSProperties = background ? { backgroundImage: `url(${JSON.stringify(api.fileRawUrl(background, version))})`, backgroundPosition: 'center', backgroundSize: node.backgroundStyle === 'cover' ? 'cover' : node.backgroundStyle === 'repeat' ? 'auto' : 'contain', backgroundRepeat: node.backgroundStyle === 'repeat' ? 'repeat' : 'no-repeat' } : {}
   const setEditing = (on: boolean) => {
     setEditingState(on)
     notifyEditing(on)
@@ -446,7 +464,7 @@ function GroupNode({ id, data, selected }: NodeProps<PSFlowNode>) {
   const press = useLongPress({ onDoubleTap: beginLabel })
 
   return (
-    <div className={`ps-group${selected ? ' is-selected' : ''}`} style={tintStyle(node.color)} {...press} {...hoverProps}>
+    <div className={`ps-group${selected ? ' is-selected' : ''}`} style={{ ...tintStyle(node.color), ...backgroundStyle }} {...press} {...hoverProps}>
       <NodeResizer isVisible={!!selected} handleClassName="nopan" lineClassName="nopan" minWidth={160} minHeight={120} onResizeEnd={onResizeEnd} />
       <Sides used={data.usedHandles} interactive={hovered || selected} />
       <Pin pinned={data.pinned} />
@@ -457,8 +475,8 @@ function GroupNode({ id, data, selected }: NodeProps<PSFlowNode>) {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => {
-            setEditing(false)
             if (draft !== (node.label ?? '')) commitLabel(id, draft)
+            setEditing(false)
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') (event.target as HTMLInputElement).blur()
@@ -595,8 +613,8 @@ function RailGroupNode({ id, data, selected }: NodeProps<PSFlowNode>) {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => {
-            setEditing(false)
             if (draft !== shown) commitLabel(id, `${RAIL_MARK} ${draft}`.trimEnd())
+            setEditing(false)
           }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') (event.target as HTMLInputElement).blur()

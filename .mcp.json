@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "canvai": {
+    "better-canvas": {
       "command": "node",
-      "args": ["packages/hub/src/cli.ts"]
+      "args": ["packages/hub/dist/better-canvas.mjs", "mcp", "--select-vault"]
     }
   }
 }
