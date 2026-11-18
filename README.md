@@ -28,7 +28,11 @@ The browser cannot move, resize, edit, delete, create, upload or paste cards. It
 
 The composer only reports a successful send after the host acknowledges it. A failed send retains the draft. Sending a request does not mean AI has applied it yet.
 
-The plugin declares a conversation-panel entrypoint through the OpenAI MCP UI extension. Host support and plugin loading determine whether that entrypoint is available. Installing a local plugin does not automatically add its tools to an already-running conversation.
+The plugin declares conversation-panel and `.canvas` file-viewer entrypoints through the OpenAI MCP UI extension, with fullscreen as the preferred presentation. File viewers resolve the exact file from host-provided metadata and enforce the selected vault boundary. Host support and plugin loading determine whether these entrypoints are available. Installing or updating a local plugin does not automatically reload an already-running conversation's MCP connection.
+
+**Desktop acceptance is still pending.** In the desktop tested on 2026-11-18, invoking `open_canvas` through the nested tool-call channel returned data without an inspectable MCP App panel. This matches the symptoms reported in [openai/codex#36765](https://github.com/openai/codex/issues/36765); it does not prove the same root cause on every version. Try the host's **Better Canvas** conversation-panel entrypoint after reloading the plugin connection. The localhost viewer cannot substitute for that host bridge.
+
+On Codex builds that expose the experimental `enable_mcp_apps` feature, check it with `codex features list`. Enable it with `codex features enable enable_mcp_apps` if needed, then restart the desktop host and reopen the conversation so both the feature and updated plugin connection load. This enables UI support; it does not change MCP tool approvals. A CLI feature value alone does not establish that the desktop panel mounted successfully.
 
 ## Install
 
@@ -86,6 +90,7 @@ npm run test:package
 
 - **Scope:** `open_vault`, `list_boards`, `set_active_board`, `get_active_board`.
 - **View:** `open_canvas` (MCP App), `start_preview` (browser), `get_preview`, `preview_file`.
+- **File entrypoint:** `get_opened_canvas` is app-only and requires the host's `openai/resource.path` metadata.
 - **Reference:** `save_selection`, `get_selection`, `create_reference`, `read_reference`.
 - **Read/write through AI:** `read_board`, `apply_ops`, `create_board`, `read_note`, `update_note`.
 

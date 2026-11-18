@@ -1,6 +1,6 @@
 import type { CanvasData } from '@better-canvas/core'
 export interface Snapshot {
-  vaultName?: string; needsVault?: boolean
+  vaultName?: string; needsVault?: boolean; needsOpenedFile?: boolean
   boards: { path: string; nodes: number; edges: number }[]
   board?: string; revision?: string; data?: CanvasData
 }
@@ -53,11 +53,19 @@ export async function connectClient(): Promise<Client> {
     },
   }
   const { App: McpApp } = await import('@modelcontextprotocol/ext-apps')
-  const app = new McpApp({ name: 'Better Canvas', version: '0.3.0' }, {}, { autoResize: false })
+  const app = new McpApp({ name: 'Better Canvas', version: '0.3.1' }, { availableDisplayModes: ['fullscreen'] }, { autoResize: false })
   const listeners = new Set<() => void>()
   let initial: Snapshot | undefined
+  let awaitingOpenedFile = false
+  app.ontoolinput = params => {
+    if (params.arguments?.file) {
+      awaitingOpenedFile = true
+      for (const listener of listeners) listener()
+    }
+  }
   app.ontoolresult = result => {
     if (result.structuredContent) initial = result.structuredContent as unknown as Snapshot
+    if (initial?.needsOpenedFile) awaitingOpenedFile = true
     for (const listener of listeners) listener()
   }
   await app.connect(undefined, { timeout: 8000 })
@@ -69,6 +77,11 @@ export async function connectClient(): Promise<Client> {
   return {
     mode: 'mcp', canSend: !!app.getHostCapabilities()?.message?.text,
     preview: async board => {
+      if (awaitingOpenedFile) {
+        const value = await call<Snapshot>('get_opened_canvas')
+        if (value.board) { awaitingOpenedFile = false; initial = undefined }
+        return value
+      }
       if (initial && !board) { const value = initial; initial = undefined; return value }
       return call('get_preview', board ? { board } : {})
     },
@@ -79,6 +92,9 @@ export async function connectClient(): Promise<Client> {
       if (!app.getHostCapabilities()?.message?.text) throw new Error('This host does not support sending messages.')
       const result = await app.sendMessage({
         role: 'user', content: [{ type: 'text', text: messageFor(reference, instruction) }],
+        ...(app.getHostCapabilities()?.experimental?.['openai/message'] ? {
+          _meta: { 'openai/message': { target: 'active', send: true } },
+        } : {}),
       }, { timeout: 15000 })
       if (result.isError) throw new Error('The host did not accept the message. Your draft is preserved.')
     },

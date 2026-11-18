@@ -33,6 +33,20 @@ async function setup() {
 }
 
 describe('browser, MCP and vault interoperability', () => {
+  it('opens the exact host-selected Canvas and rejects absent or out-of-vault metadata', async () => {
+    const { root } = await setup()
+    const opened = await client!.callTool({name:'open_canvas',arguments:{file:{name:'Board.canvas',resourceUri:'host-resource://opaque'}}})
+    expect(result(opened)).toEqual({needsOpenedFile:true})
+    const file = await client!.callTool({name:'get_opened_canvas',arguments:{},_meta:{'openai/resource':{path:path.join(root,'Board.canvas')}}})
+    expect(result(file).board).toBe('Board.canvas')
+    expect(result(file).data.nodes[0].id).toBe('a')
+    expect((await client!.callTool({name:'get_opened_canvas',arguments:{}})).isError).toBe(true)
+    expect((await client!.callTool({name:'get_opened_canvas',arguments:{},_meta:{'openai/resource':{path:path.join(root,'Note.md')}}})).isError).toBe(true)
+    const outside = await mkdtemp(path.join(tmpdir(),'outside-canvas-'))
+    await writeFile(path.join(outside,'Board.canvas'),'{"nodes":[],"edges":[]}')
+    expect((await client!.callTool({name:'get_opened_canvas',arguments:{},_meta:{'openai/resource':{path:path.join(outside,'Board.canvas')}}})).isError).toBe(true)
+  })
+
   it('shares multi-selection, resolves a stable reference, and edits only the target', async () => {
     const { root, get, post } = await setup()
     const before = await get()

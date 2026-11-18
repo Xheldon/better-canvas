@@ -13,8 +13,8 @@ import { startServe, type RunningServer } from './serve.ts'
 const UI = 'ui://better-canvas/viewer.html'
 const readOnly = { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
 const write = { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
-const modelOnly = { ui: { visibility: ['model'] } }
-const both = { ui: { visibility: ['app', 'model'] } }
+const modelOnly = { ui: { visibility: ['model'] }, 'openai/widgetAccessible': false }
+const both = { ui: { visibility: ['app', 'model'] }, 'openai/widgetAccessible': true }
 const selectionSchema = {
   sessionId: z.string().min(1).max(100), board: z.string(),
   nodeIds: z.array(z.string()).max(1000), edgeIds: z.array(z.string()).max(1000),
@@ -31,7 +31,7 @@ const opSchema = z.discriminatedUnion('op', [
 ])
 
 export function createHubServer(initialRoot = '', webDist?: string) {
-  const server = new McpServer({ name: 'better-canvas', version: '0.3.0' })
+  const server = new McpServer({ name: 'better-canvas', version: '0.3.1' })
   let root = initialRoot
   let preview: RunningServer | undefined
   function requireRoot() { if (!root) throw new Error('First use open_vault with the folder explicitly chosen by the user.'); return root }
@@ -44,14 +44,37 @@ export function createHubServer(initialRoot = '', webDist?: string) {
   server.registerResource('canvas-viewer', UI, { mimeType: 'text/html;profile=mcp-app' }, async () => ({
     contents: [{ uri: UI, mimeType: 'text/html;profile=mcp-app',
       text: await readFile(path.join(webDist ?? '', 'widget.html'), 'utf8'),
-      _meta: { ui: { prefersBorder: false, csp: { connectDomains: [], resourceDomains: [] } } },
+      _meta: {
+        ui: { prefersBorder: false, csp: { connectDomains: [], resourceDomains: [] } },
+        'openai/ui': { availableDisplayModes: ['fullscreen'], preferredDisplayMode: 'fullscreen' },
+      },
     }],
   }))
   server.registerTool('open_canvas', {
-    title: 'Open Canvas', description: 'Open the read-only Canvas panel in this conversation. Select cards and send a request to this same chat. No separate AI is started.',
-    inputSchema: { board: z.string().optional() }, annotations: readOnly,
-    _meta: { ui: { resourceUri: UI }, 'openai/ui': { entrypoints: [{ type: 'thread' }] } },
-  }, ({ board }) => run(async () => root ? await previewSnapshot(root, board) : { needsVault: true }))
+    title: 'Better Canvas', description: 'Open the read-only Canvas panel in this conversation. Select cards and send a request to this same chat. No separate AI is started.',
+    inputSchema: {
+      board: z.string().optional(),
+      file: z.object({ name: z.string(), resourceUri: z.string() }).optional(),
+    }, annotations: readOnly,
+    _meta: {
+      ui: { resourceUri: UI },
+      'openai/outputTemplate': UI,
+      'openai/ui': { entrypoints: [{ type: 'thread' }, { type: 'file', extensions: ['.canvas'] }] },
+    },
+  }, ({ board, file }) => run(async () => file ? { needsOpenedFile: true } : root ? await previewSnapshot(root, board) : { needsVault: true }))
+
+  server.registerTool('get_opened_canvas', {
+    description: 'Resolve a Canvas opened through the host file-viewer entrypoint. The host supplies its path in MCP metadata. Never infer a path from an opaque resource URI or a filename.',
+    inputSchema: {}, annotations: readOnly, _meta: { ...both, ui: { visibility: ['app'] } },
+  }, (_input, extra) => run(async () => {
+    if (!root) return { needsVault: true }
+    const resource = extra._meta?.['openai/resource'] as { path?: unknown } | undefined
+    if (typeof resource?.path !== 'string' || !path.isAbsolute(resource.path)) throw new Error('Open a Canvas from the host file viewer to use this entrypoint.')
+    const relative = path.relative(await realpath(root), await realpath(resource.path))
+    if (path.extname(relative).toLowerCase() !== '.canvas') throw new Error('The opened resource must be a Canvas file.')
+    // previewSnapshot/readBoard apply the same vault jail as every other read.
+    return previewSnapshot(root, relative)
+  }))
 
   server.registerTool('open_vault', {
     title: 'Open a vault', description: 'Choose the local folder explicitly provided by the user. Do not scan other folders.',

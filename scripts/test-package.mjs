@@ -27,8 +27,15 @@ try {
   const tools = (await client.listTools()).tools
   const panel = tools.find(t => t.name === 'open_canvas')
   assert.ok(panel._meta.ui.resourceUri)
+  assert.equal(panel._meta['openai/outputTemplate'], panel._meta.ui.resourceUri)
+  assert.deepEqual(panel._meta['openai/ui'].entrypoints, [{type:'thread'},{type:'file',extensions:['.canvas']}])
   assert.deepEqual(tools.find(t => t.name === 'apply_ops')._meta.ui.visibility, ['model'])
+  assert.equal(tools.find(t => t.name === 'apply_ops')._meta['openai/widgetAccessible'], false)
+  assert.equal(tools.find(t => t.name === 'create_reference')._meta['openai/widgetAccessible'], true)
   const resource = await client.readResource({uri: panel._meta.ui.resourceUri})
+  assert.deepEqual(resource.contents[0]._meta['openai/ui'], {
+    availableDisplayModes: ['fullscreen'], preferredDisplayMode: 'fullscreen',
+  })
   assert.ok(resource.contents[0].text.includes('__BETTER_CANVAS_MCP__'))
   assert.ok(!resource.contents[0].text.includes('@xyflow'))
   assert.equal((await client.callTool({ name: 'list_boards', arguments: {} })).isError, true)

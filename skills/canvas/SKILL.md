@@ -7,6 +7,7 @@ Use the vault directory explicitly supplied by the user. Never scan unrelated fo
 
 1. Call open_vault with the selected directory, list_boards, and set_active_board for the requested file.
 2. Prefer open_canvas in an MCP Apps host. It provides a read-only panel with card references and a bottom composer that sends through ui/message to the current conversation.
+   If the tool returns data but no panel appears, check the host's Better Canvas conversation-panel entrypoint or `.canvas` file viewer. An updated plugin may require the host to reload its connection. Do not infer a file path from an opaque host resource URI; the file viewer resolves host metadata within the selected vault.
 3. If the host has no MCP Apps support, start_preview returns a local read-only browser URL. Open it in the browser panel. Its Send button is disabled because ordinary webpages cannot inject messages into host chat.
 4. On a message containing a referenceId, call read_reference. A stable reference takes precedence over the current selection. Otherwise call get_selection; disambiguate multiple sessions before changing content.
 5. For native browser annotations, inspect data-node-id and the board title/path. Do not infer IDs from coordinates alone.
