@@ -19,6 +19,7 @@ Automated coverage includes:
 - Extracted release ZIP, real stdio MCP client, bundled UI resource and model-only write-tool metadata.
 - Real MCP Apps SDK handshake and message acknowledgment through a simulated protocol host; host visibility policy is configured explicitly.
 - Host file-entrypoint resolution, missing metadata, non-Canvas inputs and out-of-vault rejection.
+- React pointer/wheel interaction tests: Shift-drag from card text or background, live composer chips, additive selection, click toggling, cancellation/Escape, Cmd/Ctrl wheel anchoring and line-delta normalization, and selection after zoom/pan. These run in jsdom with layout/pointer-capture shims, not in the native desktop panel.
 
 For manual UI checks use a disposable copy of examples/vault. Verify selection chips, Shift selection, background pan, card drag having no effect, editing shortcuts having no effect, linked notes, narrow layout, and refresh after an MCP edit. Compare the file bytes before and after read-only gestures.
 

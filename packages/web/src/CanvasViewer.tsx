@@ -19,7 +19,7 @@ function FileCard({ node, client, refreshKey }: { node: CanvasNode; client: Clie
   if (file.kind === 'note') return <><div className="file-title">↗ {node.file?.split('/').pop()}{node.subpath}</div><Markdown text={file.text ?? ''} /></>
   return <div className="file-error">{node.file}<small>{s.unsupported}</small></div>
 }
-type Gesture = { mode: 'pan' | 'box'; start: Point; last: Point; view: View; additive: string[]; moved: boolean }
+type Gesture = { mode: 'pan' | 'box'; pointerId: number; start: Point; last: Point; view: View; additive: string[]; startNode?: string; moved: boolean }
 export function CanvasViewer({ data, client, selected, onSelect, refreshKey }: {
   data: CanvasData; client: Client; selected: string[]; onSelect(ids: string[]): void; refreshKey: number
 }) {
@@ -50,37 +50,41 @@ export function CanvasViewer({ data, client, selected, onSelect, refreshKey }: {
     const el = root.current!
     function wheel(event: WheelEvent) {
       event.preventDefault()
+      if (gesture.current) return
       const rect = el.getBoundingClientRect()
+      // Mouse wheels may report lines/pages; trackpads normally report pixels.
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1
+      const dx = event.deltaX * unit, dy = event.deltaY * unit
       setView(v => event.ctrlKey || event.metaKey
-        ? zoomAt(v, { x: event.clientX - rect.left, y: event.clientY - rect.top }, Math.exp(-event.deltaY * .006))
-        : { ...v, x: v.x - (event.shiftKey ? event.deltaY : event.deltaX), y: v.y - (event.shiftKey ? event.deltaX : event.deltaY) })
+        ? zoomAt(v, { x: event.clientX - rect.left, y: event.clientY - rect.top }, Math.exp(-dy * .006))
+        : { ...v, x: v.x - (event.shiftKey ? dy : dx), y: v.y - (event.shiftKey ? dx : dy) })
     }
-    el.addEventListener('wheel', wheel, { passive: false })
-    return () => el.removeEventListener('wheel', wheel)
+    el.addEventListener('wheel', wheel, { passive: false, capture: true })
+    return () => el.removeEventListener('wheel', wheel, { capture: true })
   }, [])
   function point(e: PointerEvent) {
     const rect = root.current!.getBoundingClientRect()
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
   function start(e: PointerEvent<HTMLDivElement>) {
-    if ((e.target as HTMLElement).closest('button') || e.button === 2) return
+    if (gesture.current || (e.target as HTMLElement).closest('button') || (e.button !== 0 && e.button !== 1)) return
     const node = (e.target as HTMLElement).closest<HTMLElement>('[data-node-id]')?.dataset.nodeId
     root.current?.focus({ preventScroll: true })
     e.preventDefault()
-    if (node && !space.current && e.button === 0) {
-      onSelect(e.shiftKey ? selected.includes(node) ? selected.filter(id => id !== node) : [...selected, node] : [node])
+    if (node && !e.shiftKey && !space.current && e.button === 0) {
+      onSelect([node])
       return
     }
-    if (e.button !== 0 && e.button !== 1) return
     const start = point(e)
-    gesture.current = { mode: e.shiftKey && !space.current ? 'box' : 'pan', start, last: start, view: viewRef.current, additive: e.shiftKey ? selected : [], moved: false }
+    gesture.current = { mode: e.shiftKey && e.button === 0 && !space.current ? 'box' : 'pan', pointerId: e.pointerId, start, last: start, view: viewRef.current, additive: [...selected], startNode: node, moved: false }
     root.current?.setPointerCapture(e.pointerId)
   }
   function move(e: PointerEvent<HTMLDivElement>) {
     const g = gesture.current
-    if (!g) return
+    if (!g || e.pointerId !== g.pointerId) return
     g.last = point(e)
     if (Math.hypot(g.last.x - g.start.x, g.last.y - g.start.y) > 4) g.moved = true
+    if (!g.moved) return
     if (g.mode === 'pan') setView({ ...g.view, x: g.view.x + g.last.x - g.start.x, y: g.view.y + g.last.y - g.start.y })
     else {
       const a = world(g.start, g.view), b = world(g.last, g.view)
@@ -91,21 +95,34 @@ export function CanvasViewer({ data, client, selected, onSelect, refreshKey }: {
   }
   function finish(e: PointerEvent<HTMLDivElement>) {
     const g = gesture.current
-    if (g && !g.moved && g.mode === 'pan' && !space.current) onSelect([])
+    if (!g || e.pointerId !== g.pointerId) return
+    move(e)
+    if (!g.moved) {
+      if (g.mode === 'pan' && !space.current) onSelect([])
+      else if (g.mode === 'box' && g.startNode) {
+        onSelect(g.additive.includes(g.startNode) ? g.additive.filter(id => id !== g.startNode) : [...g.additive, g.startNode])
+      }
+    }
+    endGesture()
+  }
+  function endGesture(cancel = false) {
+    const g = gesture.current
+    if (!g) return
     gesture.current = undefined; setBox(undefined)
-    if (root.current?.hasPointerCapture(e.pointerId)) root.current.releasePointerCapture(e.pointerId)
+    if (cancel && g.mode === 'box') onSelect(g.additive)
+    if (root.current?.hasPointerCapture(g.pointerId)) root.current.releasePointerCapture(g.pointerId)
   }
   function zoom(factor: number) { setView(v => zoomAt(v, { x: size.width / 2, y: size.height / 2 }, factor)) }
   const focused = nodes.filter(n => selected.includes(n.id))
   return <div className="viewer" ref={root} tabIndex={0} aria-label="Canvas read-only view"
-    onPointerDown={start} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish}
-    onBlur={() => { space.current = false }} onDragStart={e => e.preventDefault()} onDrop={e => e.preventDefault()} onDragOver={e => e.preventDefault()}
+    onPointerDown={start} onPointerMove={move} onPointerUp={finish} onPointerCancel={() => endGesture(true)} onLostPointerCapture={() => endGesture(true)}
+    onBlur={() => { space.current = false; endGesture(true) }} onDragStart={e => e.preventDefault()} onDrop={e => e.preventDefault()} onDragOver={e => e.preventDefault()}
     onPaste={e => e.preventDefault()} onCut={e => e.preventDefault()}
     onContextMenu={e => e.preventDefault()}
     onKeyDown={e => {
       if (e.target !== root.current) return
       if (e.code === 'Space') { e.preventDefault(); space.current = true }
-      if (e.key === 'Escape') onSelect([])
+      if (e.key === 'Escape') { endGesture(); onSelect([]) }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); onSelect(nodes.filter(n => n.type !== 'group').map(n => n.id)) }
       if (['Delete', 'Backspace'].includes(e.key) || ((e.metaKey || e.ctrlKey) && ['v', 'x', 'z', 'y'].includes(e.key.toLowerCase()))) e.preventDefault()
       if (e.key === '0') setView(fit(nodes, size))

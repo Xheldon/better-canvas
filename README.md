@@ -12,12 +12,14 @@ Built with **React, TypeScript and Vite**. Cards use an HTML layer and connectio
 
 1. Open the vault folder you choose.
 2. Open a Canvas in the conversation's MCP App panel.
-3. Click a card, Shift-click more cards, or Shift-drag on the background to select several.
+3. Click a card, Shift-click to add/remove a card, or hold Shift and drag with the left mouse button from a card or empty space to select several. The rectangle adds intersecting cards to the existing selection.
 4. Selected cards appear as reference chips above the bottom input.
 5. Describe the change and press Enter. Shift+Enter inserts a newline; IME confirmation does not send.
 6. The host receives a message containing an immutable card reference. AI reads the reference, applies revision-checked MCP edits, and the preview refreshes.
 
 The browser cannot move, resize, edit, delete, create, upload or paste cards. It has no content-writing HTTP endpoints. View metadata such as selection is stored separately.
+
+Hold Cmd on macOS (Ctrl on Windows/Linux) while scrolling to zoom around the pointer. Scroll without a modifier to pan. Selection and zoom never change card positions in the source file.
 
 ### Two ways to view
 
