@@ -33,7 +33,7 @@ it('completes the real MCP Apps SDK handshake, resolves a reference, and waits f
     await app.connect(appTransports[1])
     expect(app.getHostCapabilities()?.message?.text).toBeDefined()
     const snapshot=await app.callServerTool({name:'get_preview',arguments:{board:'Board.canvas'}})
-    const reference=await app.callServerTool({name:'create_reference',arguments:{sessionId:'app',board:'Board.canvas',nodeIds:['a'],edgeIds:[],revision:(snapshot.structuredContent as Record<string,unknown>).revision}})
+    const reference=await app.callServerTool({name:'create_reference',arguments:{workspaceId:(snapshot.structuredContent as Record<string,unknown>).workspaceId,sessionId:'app',board:'Board.canvas',nodeIds:['a'],edgeIds:[],revision:(snapshot.structuredContent as Record<string,unknown>).revision}})
     expect(reference.isError).not.toBe(true)
     const id=(reference.structuredContent as Record<string,unknown>).id
     const ack=await app.sendMessage({role:'user',content:[{type:'text',text:'Update the heading. Reference: '+id}]})

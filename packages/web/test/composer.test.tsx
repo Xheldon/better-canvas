@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { Composer, shouldSubmit } from '../src/Composer'
 import type { Client } from '../src/client'
 afterEach(cleanup)
-const selection={sessionId:'s',board:'Board.canvas',nodeIds:['a'],edgeIds:[],revision:'revision'}
+const selection={workspaceId:'workspace',sessionId:'s',board:'Board.canvas',nodeIds:['a'],edgeIds:[],revision:'revision'}
 const cards=[{id:'a',type:'text',text:'Original card',x:0,y:0,width:300,height:200}]
 function setup(canSend=true) {
   const reference=vi.fn(async(value)=>({...value,id:'ref',citation:'reference'}))

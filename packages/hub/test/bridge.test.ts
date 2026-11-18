@@ -50,7 +50,7 @@ describe('browser, MCP and vault interoperability', () => {
   it('shares multi-selection, resolves a stable reference, and edits only the target', async () => {
     const { root, get, post } = await setup()
     const before = await get()
-    const selection = { sessionId: 'tab-a', board: 'Board.canvas', nodeIds: ['a','b'], edgeIds: ['e'], revision: before.revision }
+    const selection = { workspaceId: before.workspaceId, sessionId: 'tab-a', board: 'Board.canvas', nodeIds: ['a','b'], edgeIds: ['e'], revision: before.revision }
     expect((await post('/api/selection', selection)).ok).toBe(true)
     const selected = result(await client!.callTool({ name: 'get_selection', arguments: {} }))
     expect(selected.nodes.map((n:any) => n.id)).toEqual(['a','b'])
@@ -58,7 +58,7 @@ describe('browser, MCP and vault interoperability', () => {
     await post('/api/selection', { ...selection, nodeIds: ['b'], edgeIds: [] })
     const resolved = result(await client!.callTool({ name: 'read_reference', arguments: { id: ref.id } }))
     expect(resolved.nodeIds).toEqual(['a','b'])
-    const edit = await client!.callTool({ name: 'apply_ops', arguments: { board: 'Board.canvas', expectedRevision: before.revision, ops: [{ op:'update_node', id:'a', patch:{text:'Changed through MCP'} }] } })
+    const edit = await client!.callTool({ name: 'apply_ops', arguments: { workspaceId: before.workspaceId, board: 'Board.canvas', expectedRevision: before.revision, ops: [{ op:'update_node', id:'a', patch:{text:'Changed through MCP'} }] } })
     expect(edit.isError).not.toBe(true)
     const next = await get()
     expect(next.data.nodes[0]).toMatchObject({ x:-130, y:210, width:333, height:111, pluginField:42, text:'Changed through MCP' })
@@ -79,11 +79,11 @@ describe('browser, MCP and vault interoperability', () => {
     await writeFile(path.join(root, 'Board.canvas'), JSON.stringify(external))
     const stale = await post('/api/mutate', { board:'Board.canvas', expectedRevision:before.revision, changes:[{kind:'set_text',id:'a',text:'stale'}] })
     expect(stale.status).toBe(405)
-    const ai = await client!.callTool({ name:'apply_ops', arguments:{ board:'Board.canvas', expectedRevision:before.revision, ops:[{op:'update_node',id:'a',patch:{text:'stale AI'}}] } })
+    const ai = await client!.callTool({ name:'apply_ops', arguments:{ workspaceId:before.workspaceId, board:'Board.canvas', expectedRevision:before.revision, ops:[{op:'update_node',id:'a',patch:{text:'stale AI'}}] } })
     expect(ai.isError).toBe(true)
     expect((await get()).data).toEqual(external)
     const version = (await get()).revision
-    const responses = await Promise.all(['one','two'].map(text => client!.callTool({ name:'apply_ops', arguments:{board:'Board.canvas',expectedRevision:version,ops:[{op:'update_node',id:'a',patch:{text}}]} })))
+    const responses = await Promise.all(['one','two'].map(text => client!.callTool({ name:'apply_ops', arguments:{workspaceId:before.workspaceId,board:'Board.canvas',expectedRevision:version,ops:[{op:'update_node',id:'a',patch:{text}}]} })))
     expect(responses.filter(r=>r.isError).length).toBe(1)
     expect((await get()).data.external).toBe(true)
     expect((await post('/api/mutate',{board:'Board.canvas',changes:[{kind:'set_text',id:'a',text:'no revision'}]})).status).toBe(405)
@@ -101,7 +101,8 @@ describe('browser, MCP and vault interoperability', () => {
     for (let i=0;i<50 && (!messages.some(m=>m.type==='file_changed') || !messages.some(m=>m.type==='board_changed'));i++) await delay(20)
     expect(messages.some(m=>m.type==='file_changed' && m.path==='Note.md')).toBe(true)
     expect(messages.some(m=>m.type==='board_changed')).toBe(true)
-    const excerpt = await (await fetch(base+'/api/file?path=Note.md&subpath=%23One')).json() as any
+    const scope = await (await fetch(base+'/api/preview')).json() as any
+    const excerpt = await (await fetch(base+'/api/file?path=Note.md&subpath=%23One&workspaceId='+scope.workspaceId)).json() as any
     expect(excerpt.text).toBe('## One\n\nNew text')
     ws.close()
   })
@@ -112,14 +113,15 @@ describe('browser, MCP and vault interoperability', () => {
     const outside = await mkdtemp(path.join(tmpdir(),'outside-vault-'))
     await writeFile(path.join(outside,'Secret.md'),'outside')
     await symlink(outside,path.join(root,'escape'))
-    expect((await fetch(base+'/api/file?path=escape/Secret.md')).ok).toBe(false)
+    const scope = await get()
+    expect((await fetch(base+'/api/file?path=escape/Secret.md&workspaceId='+scope.workspaceId)).ok).toBe(false)
     await expect(writeVersioned(root,'escape/New.md','no')).rejects.toThrow('Symlink')
     await symlink(outside,path.join(root,'assets'))
     const upload = await fetch(base+'/api/upload?name=sample.png', {method:'POST',body:new Uint8Array([137,80,78,71])})
     expect(upload.ok).toBe(false)
     expect(await readdir(outside)).toEqual(['Secret.md'])
     const b = await get()
-    for (const sessionId of ['first','second']) await post('/api/selection',{sessionId,board:'Board.canvas',nodeIds:['a'],edgeIds:[],revision:b.revision})
+    for (const sessionId of ['first','second']) await post('/api/selection',{workspaceId:b.workspaceId,sessionId,board:'Board.canvas',nodeIds:['a'],edgeIds:[],revision:b.revision})
     expect(result(await client!.callTool({name:'get_selection',arguments:{}})).status).toBe('ambiguous')
     expect(result(await client!.callTool({name:'get_selection',arguments:{sessionId:'first'}})).nodes[0].id).toBe('a')
   })

@@ -1,6 +1,6 @@
 {
   "name": "@xheldon/better-canvas",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "publishConfig": {
     "access": "public"
   },
@@ -35,7 +35,7 @@
     "prepublishOnly": "node build.mjs"
   },
   "devDependencies": {
-    "@better-canvas/core": "0.3.1",
+    "@better-canvas/core": "0.4.0",
     "@modelcontextprotocol/client": "^2.4.0",
     "@modelcontextprotocol/ext-apps": "^2.0.4",
     "@modelcontextprotocol/sdk": "^1.12.0",

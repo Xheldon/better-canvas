@@ -22,7 +22,7 @@ try {
   const catalog = JSON.parse(await readFile(path.join(temp, 'better-canvas/.agents/plugins/marketplace.json'), 'utf8'))
   assert.equal(catalog.plugins[0].source.path, './')
   const entry = path.join(temp, 'better-canvas/packages/hub/dist/better-canvas.mjs')
-  const transport = new StdioClientTransport({ command: process.execPath, args: [entry, 'mcp', '--select-vault'], cwd: temp, stderr: 'pipe' })
+  const transport = new StdioClientTransport({ command: process.execPath, args: [entry, 'mcp', '--select-vault'], cwd: temp, stderr: 'pipe', env: { BETTER_CANVAS_SETTINGS: path.join(temp, 'settings.json') } })
   await client.connect(transport)
   const tools = (await client.listTools()).tools
   const panel = tools.find(t => t.name === 'open_canvas')
@@ -59,7 +59,7 @@ try {
   assert.ok(!boardResult.isError)
   const before = boardResult.structuredContent
   assert.deepEqual(before.data, original)
-  const selection = { sessionId: 'package-test', board: 'Board.canvas', nodeIds: ['one','two'], edgeIds: [], revision: before.revision }
+  const selection = { workspaceId: before.workspaceId, sessionId: 'package-test', board: 'Board.canvas', nodeIds: ['one','two'], edgeIds: [], revision: before.revision }
   const post = async (route, body) => fetch(new URL(route, preview.url), { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) })
   assert.equal((await post('/api/selection', selection)).status, 200)
   assert.equal(decode(await client.callTool({ name: 'get_selection', arguments: {} })).nodes.length, 2)
@@ -68,15 +68,32 @@ try {
   const reference = await referenceResponse.json()
   await post('/api/selection', { ...selection, nodeIds: ['two'] })
   assert.deepEqual(decode(await client.callTool({ name: 'read_reference', arguments: { id: reference.id } })).nodeIds, ['one','two'])
-  const edit = await client.callTool({ name: 'apply_ops', arguments: { board: 'Board.canvas', expectedRevision: before.revision, ops: [{ op: 'update_node', id: 'one', patch: {text: 'Edited through packaged MCP'} }] } })
+  const edit = await client.callTool({ name: 'apply_ops', arguments: { workspaceId: before.workspaceId, board: 'Board.canvas', expectedRevision: before.revision, ops: [{ op: 'update_node', id: 'one', patch: {text: 'Edited through packaged MCP'} }] } })
   assert.ok(!edit.isError, edit.content?.[0]?.text)
   const saved = JSON.parse(await readFile(path.join(vault, 'Board.canvas'), 'utf8'))
   assert.deepEqual(saved, { ...original, nodes: [{ ...original.nodes[0], text: 'Edited through packaged MCP' }, original.nodes[1]] })
   assert.equal((await post('/api/mutate', { board:'Board.canvas', expectedRevision:before.revision, changes:[{kind:'set_text',id:'one',text:'stale'}] })).status, 405)
   const note = decode(await client.callTool({ name: 'read_note', arguments: { path: 'Note.md' } }))
-  decode(await client.callTool({ name: 'update_note', arguments: { path: 'Note.md', text: '# Note\n\nUpdated note.\n', expectedRevision: note.revision } }))
+  decode(await client.callTool({ name: 'update_note', arguments: { workspaceId: note.workspaceId, path: 'Note.md', text: '# Note\n\nUpdated note.\n', expectedRevision: note.revision } }))
   assert.equal(await readFile(path.join(vault, 'Note.md'), 'utf8'), '# Note\n\nUpdated note.\n')
-  console.log('Release ZIP passed: standalone stdio, vault selection, bundled preview, multi-selection, stable references, read-only HTTP, exact MCP edits, MCP App resource, and linked notes.')
+  const other = path.join(temp, 'other-directory')
+  await mkdir(other)
+  await writeFile(path.join(other, 'Board.canvas'), JSON.stringify(original))
+  const switched = decode(await client.callTool({ name: 'set_directory', arguments: { path: other, workspaceId: before.workspaceId } }))
+  assert.notEqual(switched.workspaceId, before.workspaceId)
+  assert.equal((await (await fetch(new URL('/api/preview', preview.url))).json()).workspaceId, switched.workspaceId)
+  assert.equal((await client.callTool({ name: 'apply_ops', arguments: { workspaceId: before.workspaceId, board: 'Board.canvas', expectedRevision: before.revision, ops: [{ op: 'update_node', id: 'one', patch: { text: 'Old request' } }] } })).isError, true)
+  assert.equal((await post('/api/reference', selection)).ok, false)
+  assert.deepEqual(JSON.parse(await readFile(path.join(other, 'Board.canvas'), 'utf8')), original)
+  await client.close()
+  const restarted = new Client({ name: 'package-restart', version: '1' })
+  try {
+    await restarted.connect(new StdioClientTransport({ command: process.execPath, args: [entry, 'mcp'], cwd: temp, stderr: 'pipe', env: { BETTER_CANVAS_SETTINGS: path.join(temp, 'settings.json') } }))
+    const restored = decode(await restarted.callTool({ name: 'get_preview', arguments: {} }))
+    assert.equal(restored.workspaceId, switched.workspaceId)
+    assert.equal(restored.board, 'Board.canvas')
+  } finally { await restarted.close() }
+  console.log('Release ZIP passed: standalone stdio, persistent directory settings and restart, bundled preview, selection/references, readonly HTTP, scoped MCP edits, MCP App resource, and linked notes.')
 } finally {
   await client.close()
   await rm(temp, { recursive: true, force: true })

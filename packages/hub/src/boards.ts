@@ -44,9 +44,9 @@ async function walk(root: string, rel: string, out: string[]): Promise<void> {
   for (const entry of entries) {
     if (entry.isDirectory()) {
       if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue
-      await walk(root, path.join(rel, entry.name), out)
+      await walk(root, path.posix.join(rel, entry.name), out)
     } else if (entry.isFile() && entry.name.endsWith('.canvas')) {
-      out.push(path.join(rel, entry.name))
+      out.push(path.posix.join(rel, entry.name))
     }
   }
 }

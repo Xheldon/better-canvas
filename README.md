@@ -1,23 +1,25 @@
 # Better Canvas
 
-A read-only Obsidian Canvas viewer with AI editing over MCP.
+A read-only JSON Canvas viewer with AI editing over MCP. Works with Obsidian vaults and ordinary folders.
 
 Select cards, describe a change in the bottom composer, and let the AI in your current conversation update the source files. The preview follows the files on disk.
 
 Built with **React, TypeScript and Vite**. Cards use an HTML layer and connections use SVG. There is no embedded canvas editor, automatic layout engine, separate chat sidebar, or spawned AI process.
 
-![Read-only preview with selected-card references and a bottom composer](docs/images/better-canvas.jpg)
+![Browser preview with a folder tree, selected-card references and a bottom composer](docs/images/directory-tree.png)
 
 ## How it works
 
-1. Open the vault folder you choose.
+1. Choose a **working directory** in Settings, or tell AI the directory to open. The choice is remembered locally.
 2. Open a Canvas in the conversation's MCP App panel.
 3. Click a card, Shift-click to add/remove a card, or hold Shift and drag with the left mouse button from a card or empty space to select several. The rectangle adds intersecting cards to the existing selection.
 4. Selected cards appear as reference chips above the bottom input.
 5. Describe the change and press Enter. Shift+Enter inserts a newline; IME confirmation does not send.
 6. The host receives a message containing an immutable card reference. AI reads the reference, applies revision-checked MCP edits, and the preview refreshes.
 
-The browser cannot move, resize, edit, delete, create, upload or paste cards. It has no content-writing HTTP endpoints. View metadata such as selection is stored separately.
+The sidebar preserves the original folder hierarchy and shows only Canvas files and their ancestor folders. Search keeps that hierarchy. Hidden folders and common generated folders are excluded. Settings are available even when the sidebar is collapsed.
+
+The browser cannot move, resize, edit, delete, create, upload or paste cards. It has no content-writing HTTP endpoints. View metadata and directory preferences are stored separately.
 
 Hold Cmd on macOS (Ctrl on Windows/Linux) while scrolling to zoom around the pointer. Scroll without a modifier to pan. Selection and zoom never change card positions in the source file.
 
@@ -51,7 +53,11 @@ codex plugin marketplace add /absolute/path/to/better-canvas --json
 codex plugin add better-canvas@better-canvas-local --json
 ```
 
-Then enable the plugin in a conversation. Ask AI to open the vault folder you provide, then open a Canvas using `open_canvas`. The folder is not hardcoded or uploaded.
+Then enable the plugin in a conversation and open Better Canvas. Use **Settings → Working directory** to paste your folder path, or ask AI to open the directory you provide. Obsidian is optional; no `.obsidian` folder is required. Reload the plugin connection after updating it.
+
+For an Obsidian vault, select the **entire vault root**: its image/note paths are vault-relative. For an ordinary folder, references are relative to the selected working directory. The viewer never searches parent directories for missing assets. Switching directories clears the current selection and unsent draft; old references cannot edit a same-named file in the new directory.
+
+See [installation and distribution](docs/distribution.md) for release ZIPs, source installation, and the official plugin-directory submission route.
 
 For other MCP clients, register a stdio server:
 
@@ -92,7 +98,7 @@ npm run test:package
 
 ## MCP tools
 
-- **Scope:** `open_vault`, `list_boards`, `set_active_board`, `get_active_board`.
+- **Scope:** `open_vault`, `set_directory` (Settings), `list_boards`, `set_active_board`, `get_active_board`.
 - **View:** `open_canvas` (MCP App), `start_preview` (browser), `get_preview`, `preview_file`.
 - **File entrypoint:** `get_opened_canvas` is app-only and requires the host's `openai/resource.path` metadata.
 - **Reference:** `save_selection`, `get_selection`, `create_reference`, `read_reference`.
@@ -105,6 +111,7 @@ Example after `read_board`:
 ```json
 {
   "board": "Planning.canvas",
+  "workspaceId": "<workspaceId returned by read_board>",
   "expectedRevision": "<revision returned by read_board>",
   "ops": [
     { "op": "update_node", "id": "card-id", "patch": { "text": "Updated text" } }
@@ -113,6 +120,14 @@ Example after `read_board`:
 ```
 
 Operations include adding, updating and deleting nodes and edges. Adding needs complete records and explicit coordinates. Deleting a node also removes its attached edges. There is no implicit layout. Version 0.3 replaces the former semantic/rail operations; update clients to use `patch` objects.
+
+Version 0.4 also requires `workspaceId` for content writes, file previews, selection/reference creation and setting the active board. Obtain it from a current preview/read response. A stale working directory is rejected even when both directories contain identical Canvas bytes. Existing stable references remain readable in their original directory.
+
+## Illustrated flowcharts
+
+Use a standard JSON Canvas `file` node for a local image, positioned beside the step it explains. A group rectangle can contain both cards; flow arrows continue connecting the steps. Referencing an image file does not create an edge.
+
+If the AI host supports image generation and saving local files, it can save the generated image inside the working directory and add its file node through MCP. Better Canvas does not bundle a generation model or an upload endpoint. Existing PNG, JPEG, WebP, GIF and AVIF files are previewed (up to 5 MB each). Text-card image embeds are not rendered; use a file card. See [compatibility](docs/compatibility.md).
 
 ## Fidelity and storage
 

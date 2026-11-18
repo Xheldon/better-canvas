@@ -3,12 +3,17 @@ import path from 'node:path'
 import { listBoards, readBoard } from './boards.ts'
 import { getActiveBoard } from './state.ts'
 import { readNote, vaultPath } from './storage.ts'
+import { type Workspace, workspaceId } from './workspace.ts'
 export async function previewSnapshot(root: string, requested?: string) {
   const boards = await listBoards(root)
   const preferred = requested ?? await getActiveBoard(root)
   const board = requested ?? (boards.some(b => b.path === preferred) ? preferred : boards[0]?.path)
   const snapshot = board ? await readBoard(root, board) : undefined
-  return { vaultName: path.basename(root), boards, board, revision: snapshot?.revision, data: snapshot?.data }
+  return { workspaceId: workspaceId(root), directory: root, directoryName: path.basename(root), vaultName: path.basename(root), boards, board, revision: snapshot?.revision, data: snapshot?.data }
+}
+export async function workspacePreview(workspace: Workspace, requested?: string, expectedWorkspaceId?: string) {
+  if (!workspace.root) return { ...workspace.info(), needsVault: true, boards: [] }
+  return previewSnapshot(workspace.root, expectedWorkspaceId && expectedWorkspaceId !== workspace.id ? undefined : requested)
 }
 const images: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.avif': 'image/avif' }
 export async function previewFile(root: string, rel: string, subpath?: string) {

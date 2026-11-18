@@ -27,7 +27,7 @@ function setup(initial: string[] = []) {
     return <>
       <CanvasViewer data={data} client={client} selected={selected} onSelect={select} refreshKey={0} />
       <Composer client={client} cards={data.nodes!.filter(n => selected.includes(n.id))}
-        selection={{sessionId:'test',board:'Test.canvas',revision:'unchanged',nodeIds:selected,edgeIds:[]}}
+        selection={{workspaceId:'test',sessionId:'test',board:'Test.canvas',revision:'unchanged',nodeIds:selected,edgeIds:[]}}
         onRemove={id => select(ids => ids.filter(i => i !== id))} onClear={() => select([])} />
     </>
   }

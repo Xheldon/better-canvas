@@ -4,8 +4,9 @@ import path from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
 import { listBoards, readBoard } from './boards.ts'
 import { createReference, saveSelection, type Selection } from './selection.ts'
-import { previewFile, previewSnapshot } from './preview.ts'
+import { previewFile, workspacePreview } from './preview.ts'
 import { watchRoot } from './watch.ts'
+import { Workspace } from './workspace.ts'
 
 export interface ServeOptions { port?: number; webDist?: string }
 export interface RunningServer { port: number; close(): Promise<void> }
@@ -26,7 +27,8 @@ async function body(req: IncomingMessage) {
 }
 
 /** Loopback preview. No route can write, upload, rename, delete or edit vault content. */
-export async function startServe(root: string, options: ServeOptions = {}): Promise<RunningServer> {
+export async function startServe(initialRoot: string | Workspace, options: ServeOptions = {}): Promise<RunningServer> {
+  const workspace = typeof initialRoot === 'string' ? new Workspace(initialRoot) : initialRoot
   let port = 0
   function permitted(req: IncomingMessage) {
     const host = req.headers.host
@@ -43,17 +45,27 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
       const route = url.pathname
       if (route.startsWith('/api/')) {
-        if (req.method === 'POST' && ['/api/selection', '/api/reference'].includes(route)) {
+        if (req.method === 'POST' && ['/api/selection', '/api/reference', '/api/directory'].includes(route)) {
           if (!req.headers['content-type']?.startsWith('application/json')) return json(res, 415, { error: 'Expected JSON.' })
-          const input = await body(req) as Omit<Selection, 'updatedAt'>
-          // Only view metadata is persisted; neither endpoint can edit a Canvas.
-          return json(res, 200, route === '/api/selection' ? await saveSelection(root, input) : await createReference(root, input))
+          const input = await body(req) as Omit<Selection, 'updatedAt'> & { workspaceId: string; path: string }
+          if (typeof input.workspaceId !== 'string') throw new Error('Refresh the preview before continuing.')
+          // Directory preferences and selection metadata never edit Canvas content.
+          if (route === '/api/directory') {
+            await workspace.select(input.path, input.workspaceId)
+            return json(res, 200, await workspacePreview(workspace))
+          }
+          const value = await workspace.scoped(input.workspaceId, async root => route === '/api/selection' ? await saveSelection(root, input) : await createReference(root, input))
+          return json(res, 200, { ...value, workspaceId: input.workspaceId })
         }
         if (req.method !== 'GET') return json(res, 405, { error: 'Read-only preview. Content changes are available only through MCP.' })
-        if (route === '/api/preview') return json(res, 200, await previewSnapshot(root, url.searchParams.get('board') ?? undefined))
+        if (route === '/api/preview') return json(res, 200, await workspacePreview(workspace, url.searchParams.get('board') ?? undefined, url.searchParams.get('workspaceId') ?? undefined))
+        const root = workspace.requireRoot()
         if (route === '/api/boards') return json(res, 200, await listBoards(root))
-        if (route === '/api/board') return json(res, 200, await readBoard(root, url.searchParams.get('path') ?? ''))
-        if (route === '/api/file') return json(res, 200, await previewFile(root, url.searchParams.get('path') ?? '', url.searchParams.get('subpath') ?? undefined))
+        if (route === '/api/board') return json(res, 200, { workspaceId: workspace.id, ...await readBoard(root, url.searchParams.get('path') ?? '') })
+        if (route === '/api/file') {
+          workspace.assertScope(url.searchParams.get('workspaceId') ?? '')
+          return json(res, 200, await previewFile(root, url.searchParams.get('path') ?? '', url.searchParams.get('subpath') ?? undefined))
+        }
         return json(res, 404, { error: 'Unknown route.' })
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return json(res, 405, { error: 'Read-only preview.' })
@@ -75,18 +87,29 @@ export async function startServe(root: string, options: ServeOptions = {}): Prom
     if (!permitted(req) || req.url !== '/ws') { socket.destroy(); return }
     sockets.handleUpgrade(req, socket, head, ws => sockets.emit('connection', ws, req))
   })
-  const watcher = watchRoot(root, signal => {
-    const message = JSON.stringify({ type: signal.type === 'canvas' ? 'board_changed' : 'file_changed', path: signal.board })
+  const broadcast = (value: object) => {
+    const message = JSON.stringify(value)
     for (const socket of sockets.clients) if (socket.readyState === WebSocket.OPEN) socket.send(message)
-  })
+  }
+  let watcher: ReturnType<typeof watchRoot> | undefined
+  function attachWatcher() {
+    watcher?.close(); watcher = undefined
+    if (workspace.root) {
+      // Polling remains available if the platform cannot attach a watcher.
+      try { watcher = watchRoot(workspace.root, signal => broadcast({ type: signal.type === 'canvas' ? 'board_changed' : 'file_changed', path: signal.board })) }
+      catch { /* The preview also polls for external changes. */ }
+    }
+  }
+  attachWatcher()
+  const unsubscribe = workspace.subscribe(() => { attachWatcher(); broadcast({ type: 'directory_changed' }) })
   try {
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(options.port ?? 0, '127.0.0.1', () => { port = (server.address() as { port: number }).port; resolve() })
     })
-  } catch (e) { watcher.close(); sockets.close(); throw e }
+  } catch (e) { unsubscribe(); watcher?.close(); sockets.close(); throw e }
   return { port, async close() {
-    watcher.close()
+    unsubscribe(); watcher?.close()
     for (const client of sockets.clients) client.terminate()
     sockets.close()
     server.closeAllConnections()

@@ -19,6 +19,9 @@ Automated coverage includes:
 - Extracted release ZIP, real stdio MCP client, bundled UI resource and model-only write-tool metadata.
 - Real MCP Apps SDK handshake and message acknowledgment through a simulated protocol host; host visibility policy is configured explicitly.
 - Host file-entrypoint resolution, missing metadata, non-Canvas inputs and out-of-vault rejection.
+- Persistent directory selection and restart, invalid/removed paths, same-name/same-revision cross-directory rejection, serialized switches/writes, and watcher reassignment without changing the preview URL.
+- Folder hierarchy, active-path expansion, filtered ancestors, settings error recovery, and clearing stale selections/drafts across panels and in-flight requests.
+- A standard grouped image file node with no edges and exact PNG byte retrieval.
 - React pointer/wheel interaction tests: Shift-drag from card text or background, live composer chips, additive selection, click toggling, cancellation/Escape, Cmd/Ctrl wheel anchoring and line-delta normalization, and selection after zoom/pan. These run in jsdom with layout/pointer-capture shims, not in the native desktop panel.
 
 For manual UI checks use a disposable copy of examples/vault. Verify selection chips, Shift selection, background pan, card drag having no effect, editing shortcuts having no effect, linked notes, narrow layout, and refresh after an MCP edit. Compare the file bytes before and after read-only gestures.
@@ -43,3 +46,11 @@ Environment: ChatGPT desktop 26.1111.21308 (build 27194), Node.js 22.23.1, Obsid
 - The live panel session reported the same new revision through its selection heartbeat, establishing that it had fetched the updated snapshot.
 
 This is a real submission/write/synchronization acceptance, not a simulated chat delivery. The final pointer/keyboard action used to submit was not independently observed: Enter, Shift+Enter, IME and gesture behavior have automated event tests. The panel refresh check used its reported revision rather than a new screenshot. Other clients, platform combinations and native file-entrypoint opening remain unverified. Private board names, content, paths and reference IDs are deliberately omitted here.
+
+## Directory settings release, 0.4.0
+
+On 2026-11-18, type checking and 43 tests across 10 files passed. The extracted release ZIP was exercised through a real stdio client: selecting and persisting an ordinary directory, switching the shared browser/MCP scope, rejecting an old reference/edit, restarting the service and restoring the saved directory all passed.
+
+A separate headless Google Chrome 157.0.8103.79 session on macOS exercised the built standalone browser interface with temporary, generic files. Checks covered initial setup, nested folder expansion/collapse and search, linked notes, Shift-drag references, Cmd-wheel zoom, unchanged Canvas bytes, disabled browser Send, invalid-directory recovery, two-tab directory refresh, selection/draft reset, actual PNG decoding, and settings at 1280×850 and 520×740. Screenshots were inspected; the public README image uses only that generic fixture. Dialog Escape handling and access to Settings with a collapsed sidebar passed.
+
+This does not extend the native desktop acceptance above to the new Settings interaction. The current-chat delivery result belongs to plugin 0.3.1; version 0.4.0's new settings have automated MCP/protocol and standalone browser coverage. A running host must reload its plugin connection to load the new server and UI together.

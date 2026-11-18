@@ -26,7 +26,9 @@ Unknown JSON fields are retained when a supported field is edited. Unsupported v
 
 Canvas and linked note files on disk are authoritative. Browser selection and references are stored in .better-canvas and do not alter those files. A reference snapshots exact IDs and the version visible when the request was sent.
 
-MCP writes require expectedRevision. Obsidian does not take our lock; concurrent native unsaved edits are not a shared transaction. Keep only one editor actively saving a file while AI applies changes.
+MCP writes require workspaceId and expectedRevision. Obsidian does not take our lock; concurrent native unsaved edits are not a shared transaction. Keep only one editor actively saving a file while AI applies changes.
+
+Working directories can be plain folders or full Obsidian vaults. File-node paths are resolved from that directory, never from an inferred ancestor. The sidebar preserves nested folders containing valid Canvas files; other files, empty/unrelated folders, hidden folders and generated folders such as node_modules are omitted. Malformed/unreadable Canvas files are skipped in the listing. Image references use standard file nodes and do not require edges.
 
 ## Host integration
 

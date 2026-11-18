@@ -9,7 +9,7 @@ if (!existsSync(path.join(root, 'packages/hub/dist/better-canvas.mjs'))) throw n
 rmSync(out, { recursive: true, force: true })
 mkdirSync(out, { recursive: true })
 // Explicit allowlist: never bundle a vault, local evaluation, or user configuration.
-for (const name of ['plugin.json', 'mcp.json', 'skills', 'LICENSE', 'NOTICE', 'README.md', 'docs/compatibility.md', 'docs/privacy.md', 'docs/testing.md', 'docs/images/better-canvas.jpg', 'packages/hub/dist']) {
+for (const name of ['plugin.json', 'mcp.json', 'skills', 'LICENSE', 'NOTICE', 'README.md', 'docs/compatibility.md', 'docs/privacy.md', 'docs/testing.md', 'docs/distribution.md', 'docs/images/directory-tree.png', 'packages/hub/dist']) {
   cpSync(path.join(root, name), path.join(out, name), { recursive: true })
 }
 const version = JSON.parse(readFileSync(path.join(root, 'plugin.json'), 'utf8')).version
