@@ -10,9 +10,11 @@ export const workspaceId = (root: string) => revisionOf(root)
 
 export class Workspace {
   root = ''
+  readonly settingsPath?: string
   private listeners = new Set<() => void>()
   private pending: Promise<unknown> = Promise.resolve()
-  constructor(initialRoot = '', readonly settingsPath?: string) {
+  constructor(initialRoot = '', settingsPath?: string) {
+    this.settingsPath = settingsPath
     if (initialRoot) {
       this.root = realpathSync(initialRoot)
       if (!statSync(this.root).isDirectory()) throw new Error('Choose a directory.')

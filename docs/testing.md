@@ -8,6 +8,7 @@ Required checks:
 3. npm run build
 4. npm run plugin:pack
 5. npm run test:package
+6. npm run hub -- --help (checks the unbundled Node.js source entrypoint)
 
 Automated coverage includes:
 - JSON round-trip formatting and unknown-property preservation.
