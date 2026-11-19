@@ -11,7 +11,7 @@
    codex plugin add better-canvas@better-canvas-local --json
    ```
 
-4. Enable Better Canvas in a local conversation. Reload the host's plugin connection if it was already running. Ask to open Better Canvas, then choose **Settings → Working directory**.
+4. In a local chat, type `@Better Canvas`, select the plugin from the suggestions, and ask it to open your Canvas. Expand the panel and open **Settings → Working directory**. [First-use walkthrough](../README.md#open-a-canvas-in-your-chat)
 5. Paste an absolute folder path (`~/` is supported on macOS/Linux). Obsidian users should select the entire vault root so vault-relative image and note references resolve. An ordinary folder also works.
 
 Only Canvas files and folders containing them appear in the sidebar. No project folder is included in the download. The path preference stays on the user's computer. The extracted release includes its own local marketplace catalog, so this route does not require cloning or building the source repository.
