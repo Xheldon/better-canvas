@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "better-canvas",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Read-only Obsidian Canvas previews and AI editing over MCP. Select cards and send requests through an MCP App panel.",
   "author": {
     "name": "Xheldon"

@@ -69,7 +69,9 @@ describe('browser, MCP and vault interoperability', () => {
     const history = path.join(root, '.better-canvas/history', revisionOf('Board.canvas'))
     expect((await readdir(history)).length).toBe(1)
     expect(result(await client!.callTool({ name:'read_reference', arguments:{ id:ref.id } })).stale).toBe(true)
-    expect((await post('/api/reference', selection)).status).toBe(409)
+    const renewed = await post('/api/reference', selection)
+    expect(renewed.status).toBe(200)
+    expect(await renewed.json()).toMatchObject({ revision: next.revision })
   })
 
   it('blocks browser writes and rejects stale or competing MCP edits', async () => {

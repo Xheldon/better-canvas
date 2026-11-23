@@ -27,6 +27,8 @@ You can switch Canvas files in the connected panel’s sidebar and keep editing 
 
 同一个面板里，切换画布后可以直接继续编辑。想在另一条聊天里编辑时，可以在那条聊天里再次点选 `@Better Canvas`。
 
+画布打开时读取一次。修改卡片会刷新当前画布，只有附件本身发生变化时才重新加载对应图片或笔记。AI 写入前会重读磁盘文件，保留其他人的改动。目标卡片、连线或文件已删除时，面板会弹出提示，整批修改都会停止。
+
 即使是在右侧浏览器里，`127.0.0.1` 或 `localhost` 地址也只提供网页预览，发送按钮会保持灰色。Mac 上文件链接的「打开方式」列出的是本机应用。要发起 AI 修改，请从聊天输入框打开插件面板。
 
 </details>
@@ -37,7 +39,9 @@ You can switch Canvas files in the connected panel’s sidebar and keep editing 
 
 Click a card to select it, Shift-click to add or remove a card, or hold Shift and drag with the left mouse button from a card or empty space to add all cards intersecting the rectangle. Selected cards appear as reference chips above the input. When typing with an IME, Enter confirms the current composition before it can submit the request.
 
-When you send, the host receives the request and a stable reference to those cards. The AI reads the current file, checks its revision and applies the edit. The preview updates when the file changes.
+When you send, the host receives the request and a stable reference to those cards. Edits use the saved file at write time. Independent changes are preserved. If a target has disappeared, the panel shows a warning and the entire batch stops. A change to the same field prompts the AI to reread it and revise its patch.
+
+Opening a board loads its content and linked previews once. The panel listens for file changes. Editing a card keeps cached illustrations, and replacing an attachment refreshes just that attachment. The refresh button also reloads the current view.
 
 The sidebar preserves the original folder hierarchy and shows only Canvas files and their ancestor folders. Search keeps that hierarchy. Hidden folders and common generated folders are excluded. Settings are available even when the sidebar is collapsed.
 
@@ -157,7 +161,7 @@ Original IDs, coordinates, dimensions, array order, group boundaries, edge sides
 
 Rendering is structurally compatible with JSON Canvas, not a copy of Obsidian's renderer. Fonts, line wrapping, curve routing, custom themes, embeds and third-party plugin visuals may differ. See [compatibility](docs/compatibility.md).
 
-Files on disk are the source of truth. Changes saved in Obsidian refresh the preview; MCP edits update those same files. Native unsaved buffers do not participate in our file lock. Revision checks reject observed competing changes and recovery copies are kept, but cross-application atomic transactions are not guaranteed.
+Files on disk are the source of truth. The plugin rechecks the saved revision immediately before replacement and keeps recovery copies. If Obsidian is between renames during a save, the writer briefly retries the same path. A permanently missing file stops the edit. Obsidian manages its own unsaved buffers and file locks.
 
 See [privacy](docs/privacy.md) and [testing](docs/testing.md).
 

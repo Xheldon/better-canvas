@@ -20,8 +20,8 @@ function FileCard({ node, client, refreshKey }: { node: CanvasNode; client: Clie
   return <div className="file-error">{node.file}<small>{s.unsupported}</small></div>
 }
 type Gesture = { mode: 'pan' | 'box'; pointerId: number; start: Point; last: Point; view: View; additive: string[]; startNode?: string; moved: boolean }
-export function CanvasViewer({ data, client, selected, onSelect, refreshKey }: {
-  data: CanvasData; client: Client; selected: string[]; onSelect(ids: string[]): void; refreshKey: number
+export function CanvasViewer({ data, client, selected, onSelect, refreshKey, fileVersions = {} }: {
+  data: CanvasData; client: Client; selected: string[]; onSelect(ids: string[]): void; refreshKey: number; fileVersions?: Record<string, number>
 }) {
   const root = useRef<HTMLDivElement>(null)
   const [view, setView] = useState<View>({ x: 0, y: 0, scale: 1 })
@@ -146,10 +146,10 @@ export function CanvasViewer({ data, client, selected, onSelect, refreshKey }: {
         className={'canvas-card ' + (node.type === 'group' ? 'group-card ' : '') + (selected.includes(node.id) ? 'selected' : '')}
         role="option" aria-selected={selected.includes(node.id)} aria-label={title(node)}
         style={{ left: node.x, top: node.y, width: node.width, height: node.height, zIndex: i + 1, '--card-color': color(node.color) } as CSSProperties}>
-        {node.type === 'group' ? <>{node.background && <div className="group-background"><FileCard node={node} client={client} refreshKey={refreshKey} /></div>}<div className="group-label">{node.label ?? 'Group'}</div></>
+        {node.type === 'group' ? <>{node.background && <div className="group-background"><FileCard node={node} client={client} refreshKey={refreshKey + (fileVersions[node.background] ?? 0)} /></div>}<div className="group-label">{node.label ?? 'Group'}</div></>
           : <div className="card-body">
             {node.type === 'text' ? <Markdown text={node.text ?? ''} />
-              : node.type === 'file' ? <FileCard node={node} client={client} refreshKey={refreshKey} />
+              : node.type === 'file' ? <FileCard node={node} client={client} refreshKey={refreshKey + (fileVersions[node.file ?? ''] ?? 0)} />
               : node.type === 'link' ? <div className="link-card"><span>↗</span><strong>{node.url ?? ''}</strong><small>Link</small></div>
               : <div className="file-error">{node.type}<small>{s.unsupported}</small></div>}
           </div>}

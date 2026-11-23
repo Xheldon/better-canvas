@@ -22,7 +22,7 @@ export interface BoardInfo {
   mtimeMs: number
 }
 
-export async function listBoards(root: string): Promise<BoardInfo[]> {
+export async function listBoards(root: string, onRead?: (rel: string, text: string, data: CanvasData) => void): Promise<BoardInfo[]> {
   const found: string[] = []
   await walk(root, '', found)
   const infos: BoardInfo[] = []
@@ -32,6 +32,7 @@ export async function listBoards(root: string): Promise<BoardInfo[]> {
       const [text, s] = await Promise.all([readFile(abs, 'utf8'), stat(abs)])
       const { data } = parseCanvas(text)
       infos.push({ path: rel, nodes: nodes(data).length, edges: edges(data).length, mtimeMs: s.mtimeMs })
+      onRead?.(rel, text, data)
     } catch {
       // unreadable or malformed board: skip rather than fail the listing
     }

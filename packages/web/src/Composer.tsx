@@ -3,12 +3,13 @@ import type { CanvasNode } from '@better-canvas/core'
 import type { Client, Selection } from './client'
 import { title } from './geometry'
 import { s } from './strings'
+import { WriteIssueError, type WriteIssue } from '@better-canvas/core'
 
 export function shouldSubmit(event: { key: string; shiftKey: boolean; composing: boolean; keyCode?: number }) {
   return event.key === 'Enter' && !event.shiftKey && !event.composing && event.keyCode !== 229
 }
-export function Composer({ client, cards, selection, onRemove, onClear, ready = true }: {
-  client: Client; cards: CanvasNode[]; selection?: Selection; onRemove(id: string): void; onClear(): void; ready?: boolean
+export function Composer({ client, cards, selection, onRemove, onClear, onIssue, ready = true }: {
+  client: Client; cards: CanvasNode[]; selection?: Selection; onRemove(id: string): void; onClear(): void; onIssue?(issue: WriteIssue): void; ready?: boolean
 }) {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
@@ -26,7 +27,7 @@ export function Composer({ client, cards, selection, onRemove, onClear, ready = 
       await client.send(reference, text)
       setDraft(current => current.trim() === text ? '' : current)
       setStatus(s.sent)
-    } catch (e) { setError((e as Error).message) }
+    } catch (e) { if (e instanceof WriteIssueError && onIssue) onIssue(e.issue); else setError((e as Error).message) }
     finally { sending.current = false; setBusy(false) }
   }
   function key(event: KeyboardEvent<HTMLTextAreaElement>) {

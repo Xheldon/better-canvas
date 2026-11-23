@@ -1,6 +1,8 @@
 const language = new URLSearchParams(location.search).get('lang')
 const zh = language ? language === 'zh' : navigator.languages.some(l => l.startsWith('zh'))
 export const s = zh ? {
+  fileGone: '找不到要修改的文件', itemsGone: '要修改的卡片或连线已移除',
+  missingFileHint: '请确认文件位置，再打开对应画布。', missingItemsHint: '请选择仍然存在的卡片，再提交修改。', dismiss: '知道了',
   files: '画布', readOnly: '只读预览', search: '查找画布…', hide: '收起文件列表', show: '显示文件列表',
   select: '选择卡片，描述想怎么改', placeholder: '希望 AI 怎样修改这些卡片？', empty: '先选择一张或多张卡片…',
   send: '发送到当前聊天', sending: '正在发送…', sent: '已发送到当前聊天，等待 AI 处理', remove: '移除引用', clear: '清除选择',
@@ -16,6 +18,8 @@ export const s = zh ? {
   directoryReference: '图片和笔记的路径以工作目录为起点。使用 Obsidian 时，请选择整个 Vault，确保关联文件可以显示。',
   rememberDirectory: '自动记住此目录。切换到其他目录时，会清除当前选择和未发送的草稿。',
 } : {
+  fileGone: 'The file is missing', itemsGone: 'The requested cards or connections were removed',
+  missingFileHint: 'Check the file location and reopen the canvas.', missingItemsHint: 'Select the remaining cards and submit your change again.', dismiss: 'Dismiss',
   files: 'Canvases', readOnly: 'Read-only preview', search: 'Find a canvas…', hide: 'Hide file list', show: 'Show file list',
   select: 'Select cards. Describe a change.', placeholder: 'What would you like AI to change?', empty: 'Select one or more cards first…',
   send: 'Send to current chat', sending: 'Sending…', sent: 'Sent to current chat. Waiting for AI.', remove: 'Remove reference', clear: 'Clear selection',

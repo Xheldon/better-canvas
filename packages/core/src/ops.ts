@@ -1,4 +1,5 @@
 import type { CanvasData, CanvasNode, CanvasEdge } from './types.ts'
+import { MissingTargetsError } from './changes.ts'
 export type Operation =
   | { op: 'update_node'; id: string; patch: Record<string, unknown> }
   | { op: 'add_node'; node: CanvasNode }
@@ -31,7 +32,8 @@ export function validateCanvas(data: CanvasData): void {
   for (const e of data.edges ?? []) {
     if (!e || typeof e.id !== 'string' || !e.id || edgeIds.has(e.id)) throw new Error('Invalid or duplicate edge ID.')
     edgeIds.add(e.id)
-    if (!ids.has(e.fromNode) || !ids.has(e.toNode)) throw new Error('Edge endpoint does not exist.')
+    const missing = [e.fromNode, e.toNode].filter(id => !ids.has(id))
+    if (missing.length) throw new MissingTargetsError([...new Set(missing)], [], 'Edge endpoint does not exist')
     for (const key of ['fromSide', 'toSide'] as const) {
       if (e[key] !== undefined && !['top', 'right', 'bottom', 'left'].includes(e[key]!)) throw new Error('Invalid edge side.')
     }
@@ -55,18 +57,18 @@ export function applyOps(original: CanvasData, operations: Operation[]): CanvasD
       data.edges.push(structuredClone(op.edge))
     } else if (op.op === 'update_node') {
       const node = data.nodes.find(n => n.id === op.id)
-      if (!node) throw new Error('Unknown node: ' + op.id)
+      if (!node) throw new MissingTargetsError([op.id], [])
       patchRecord(node, op.patch)
     } else if (op.op === 'update_edge') {
       const edge = data.edges.find(e => e.id === op.id)
-      if (!edge) throw new Error('Unknown edge: ' + op.id)
+      if (!edge) throw new MissingTargetsError([], [op.id])
       patchRecord(edge, op.patch)
     } else if (op.op === 'delete_node') {
-      if (!data.nodes.some(n => n.id === op.id)) throw new Error('Unknown node: ' + op.id)
+      if (!data.nodes.some(n => n.id === op.id)) throw new MissingTargetsError([op.id], [])
       data.nodes = data.nodes.filter(n => n.id !== op.id)
       data.edges = data.edges.filter(e => e.fromNode !== op.id && e.toNode !== op.id)
     } else if (op.op === 'delete_edge') {
-      if (!data.edges.some(e => e.id === op.id)) throw new Error('Unknown edge: ' + op.id)
+      if (!data.edges.some(e => e.id === op.id)) throw new MissingTargetsError([], [op.id])
       data.edges = data.edges.filter(e => e.id !== op.id)
     } else throw new Error('Unknown operation.')
   }

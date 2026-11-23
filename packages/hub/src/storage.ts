@@ -10,6 +10,16 @@ export class ConflictError extends Error {
   constructor() { super('The file changed since it was read. Your edit was not applied. Reload, compare your draft, and retry.') }
 }
 
+export async function readForWrite<T>(read: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await read() }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT' || attempt >= 3) throw e
+      await delay(35 * (attempt + 1))
+    }
+  }
+}
+
 /** Reject hidden paths and symlink escapes, including a symlinked parent of a new file. */
 export async function vaultPath(root: string, rel: string): Promise<string> {
   if (!rel || path.isAbsolute(rel) || rel.split(/[/\\]/).some(p => p.startsWith('.')) || rel.includes('\\')) {

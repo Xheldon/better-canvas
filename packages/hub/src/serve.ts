@@ -1,14 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { WebSocketServer, WebSocket } from 'ws'
+import { WebSocketServer } from 'ws'
+import { MissingTargetsError, WriteIssueError } from '@better-canvas/core'
 import { listBoards, readBoard } from './boards.ts'
 import { createReference, saveSelection, type Selection } from './selection.ts'
 import { previewFile, workspacePreview } from './preview.ts'
-import { watchRoot } from './watch.ts'
+import { PanelEvents } from './panel-events.ts'
 import { Workspace } from './workspace.ts'
 
-export interface ServeOptions { port?: number; webDist?: string }
+export interface ServeOptions { port?: number; webDist?: string; events?: PanelEvents }
 export interface RunningServer { port: number; close(): Promise<void> }
 const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }
 function json(res: ServerResponse, status: number, value: unknown) {
@@ -29,6 +30,17 @@ async function body(req: IncomingMessage) {
 /** Loopback preview. No route can write, upload, rename, delete or edit vault content. */
 export async function startServe(initialRoot: string | Workspace, options: ServeOptions = {}): Promise<RunningServer> {
   const workspace = typeof initialRoot === 'string' ? new Workspace(initialRoot) : initialRoot
+  const events = options.events ?? new PanelEvents(workspace)
+  events.start()
+  async function snapshot(board?: string, scope?: string) {
+    const cursor = events.cursor
+    try { return { ...await workspacePreview(workspace, board, scope), cursor } }
+    catch (e) {
+      if (board && (e as NodeJS.ErrnoException).code === 'ENOENT')
+        throw new WriteIssueError({ code: 'missing_file', path: board, nodeIds: [], edgeIds: [] })
+      throw e
+    }
+  }
   let port = 0
   function permitted(req: IncomingMessage) {
     const host = req.headers.host
@@ -52,13 +64,21 @@ export async function startServe(initialRoot: string | Workspace, options: Serve
           // Directory preferences and selection metadata never edit Canvas content.
           if (route === '/api/directory') {
             await workspace.select(input.path, input.workspaceId)
-            return json(res, 200, await workspacePreview(workspace))
+            return json(res, 200, await snapshot())
           }
-          const value = await workspace.scoped(input.workspaceId, async root => route === '/api/selection' ? await saveSelection(root, input) : await createReference(root, input))
+          const value = await workspace.scoped(input.workspaceId, async root => {
+            if (route === '/api/selection') return saveSelection(root, input)
+            try { return await createReference(root, input) } catch (e) {
+              if (e instanceof MissingTargetsError || (e as NodeJS.ErrnoException).code === 'ENOENT')
+                throw new WriteIssueError({ path: input.board, code: e instanceof MissingTargetsError ? 'missing_targets' : 'missing_file',
+                  nodeIds: e instanceof MissingTargetsError ? e.nodeIds : [], edgeIds: e instanceof MissingTargetsError ? e.edgeIds : [] })
+              throw e
+            }
+          })
           return json(res, 200, { ...value, workspaceId: input.workspaceId })
         }
         if (req.method !== 'GET') return json(res, 405, { error: 'Read-only preview. Content changes are available only through MCP.' })
-        if (route === '/api/preview') return json(res, 200, await workspacePreview(workspace, url.searchParams.get('board') ?? undefined, url.searchParams.get('workspaceId') ?? undefined))
+        if (route === '/api/preview') return json(res, 200, await snapshot(url.searchParams.get('board') ?? undefined, url.searchParams.get('workspaceId') ?? undefined))
         const root = workspace.requireRoot()
         if (route === '/api/boards') return json(res, 200, await listBoards(root))
         if (route === '/api/board') return json(res, 200, { workspaceId: workspace.id, ...await readBoard(root, url.searchParams.get('path') ?? '') })
@@ -79,37 +99,44 @@ export async function startServe(initialRoot: string | Workspace, options: Serve
       res.end(req.method === 'HEAD' ? undefined : bytes)
     })().catch((error: unknown) => {
       const e = error as Error & { status?: number; code?: string }
-      json(res, e.status ?? (e.code === 'ENOENT' ? 404 : 400), { error: e.message })
+      json(res, e.status ?? (e.code === 'ENOENT' ? 404 : 400), { error: e.message, ...(e instanceof WriteIssueError ? { issue: e.issue } : {}) })
     })
   })
   const sockets = new WebSocketServer({ noServer: true })
   server.on('upgrade', (req, socket, head) => {
-    if (!permitted(req) || req.url !== '/ws') { socket.destroy(); return }
-    sockets.handleUpgrade(req, socket, head, ws => sockets.emit('connection', ws, req))
+    const url = new URL(req.url ?? '/', 'http://localhost')
+    if (!permitted(req) || url.pathname !== '/ws') { socket.destroy(); return }
+    sockets.handleUpgrade(req, socket, head, ws => {
+      let cursor = url.searchParams.get('cursor') || events.cursor
+      const scope = url.searchParams.get('workspaceId'), session = url.searchParams.get('sessionId')
+      if (session) events.present(session, Infinity)
+      const send = () => {
+        const batch = events.since(cursor)
+        cursor = batch.cursor
+        if (scope && scope !== workspace.id) {
+          ws.send(JSON.stringify({ type: 'directory_changed', cursor }))
+          return
+        }
+        const changes = batch.changes.filter(c => c.type !== 'write_warning' || !c.sessionId || c.sessionId === session)
+        if (scope && changes.length) ws.send(JSON.stringify({ cursor, changes }))
+        if (!scope) for (const change of changes) {
+          // The original /ws API is also used by standalone clients.
+          if (change.type !== 'write_warning') ws.send(JSON.stringify('path' in change ? { type: change.type, path: change.path } : change))
+        }
+      }
+      const unsubscribe = events.onChange(send)
+      ws.on('close', () => { unsubscribe(); if (session) events.present(session, 0) })
+      send()
+    })
   })
-  const broadcast = (value: object) => {
-    const message = JSON.stringify(value)
-    for (const socket of sockets.clients) if (socket.readyState === WebSocket.OPEN) socket.send(message)
-  }
-  let watcher: ReturnType<typeof watchRoot> | undefined
-  function attachWatcher() {
-    watcher?.close(); watcher = undefined
-    if (workspace.root) {
-      // Polling remains available if the platform cannot attach a watcher.
-      try { watcher = watchRoot(workspace.root, signal => broadcast({ type: signal.type === 'canvas' ? 'board_changed' : 'file_changed', path: signal.board })) }
-      catch { /* The preview also polls for external changes. */ }
-    }
-  }
-  attachWatcher()
-  const unsubscribe = workspace.subscribe(() => { attachWatcher(); broadcast({ type: 'directory_changed' }) })
   try {
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
       server.listen(options.port ?? 0, '127.0.0.1', () => { port = (server.address() as { port: number }).port; resolve() })
     })
-  } catch (e) { unsubscribe(); watcher?.close(); sockets.close(); throw e }
+  } catch (e) { if (!options.events) events.close(); sockets.close(); throw e }
   return { port, async close() {
-    unsubscribe(); watcher?.close()
+    if (!options.events) events.close()
     for (const client of sockets.clients) client.terminate()
     sockets.close()
     server.closeAllConnections()
